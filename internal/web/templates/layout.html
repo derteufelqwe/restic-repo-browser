@@ -1,0 +1,51 @@
+{{define "head"}}<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+<link rel="icon" href="/static/img/mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;700;800&family=Spline+Sans+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/base.css">
+<link rel="stylesheet" href="/static/css/components.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/vendor/htmx.min.js" defer></script>
+<script src="/static/js/vendor/chart.umd.min.js" defer></script>
+<script src="/static/js/app.js" defer></script>{{end}}
+
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "head"}}
+<title>{{.Title}} - Restic Repo Browser</title>
+</head>
+<body>
+<div class="shell">
+  {{template "rail" .}}
+  <main class="main"><div class="main-inner">{{template "task_banner" .Banner}}{{template "content" .}}</div></main>
+</div>
+<div class="toasts" id="toasts" role="status"></div>
+</body>
+</html>{{end}}
+
+{{define "rail"}}<aside class="rail" id="rail" aria-label="Main navigation">
+  <a class="brand" href="/">
+    <img src="/static/img/mark.svg" alt="">
+    <b>Restic Repo Browser<span>Read-only view</span></b>
+  </a>
+  <nav>
+    <div class="rail-group">
+      <a class="rail-link" href="/" {{if eq .Active "overview"}}aria-current="page"{{end}}>All repositories<span class="rail-count">{{len .Rail.Repos}}</span></a>
+      {{range .Rail.Repos}}<a class="rail-link" href="/repos/{{.ID}}" {{if eq $.Active (printf "repo:%d" .ID)}}aria-current="page"{{end}}><span class="dot {{.Class}}" title="{{.Hint}}"></span>{{.Name}}</a>
+      {{end}}
+    </div>
+    <div class="rail-group">
+      <div class="rail-title">Maintenance</div>
+      <a class="rail-link" href="/jobs" {{if eq .Active "jobs"}}aria-current="page"{{end}}>Jobs{{if .Rail.Failed}}<span class="rail-count alert" title="{{.Rail.Failed}} failed on the last run">{{.Rail.Failed}} failed</span>{{end}}</a>
+      <a class="rail-link" href="/settings" {{if eq .Active "settings"}}aria-current="page"{{end}}>Settings</a>
+    </div>
+  </nav>
+  <form class="rail-foot" method="post" action="/logout">
+    <button class="signout" type="submit">{{template "icon_signout"}}Sign out</button>
+  </form>
+</aside>{{end}}

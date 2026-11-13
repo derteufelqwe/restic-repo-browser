@@ -1,0 +1,63 @@
+/* Strata design tokens.
+   Palette is drawn from sediment: shale, limestone, petrol-dark water, one band of ochre. */
+
+:root {
+  /* surfaces */
+  --shale: #e3e7e1;          /* page background */
+  --limestone: #f4f6f2;      /* panels, tables, inputs */
+  --chalk: #fbfcfa;          /* raised: inputs, menus, modals */
+
+  /* ink */
+  --petrol: #15343a;         /* primary text, primary buttons, rail */
+  --petrol-90: #1d4249;
+  --slate: #4b5b5c;          /* secondary text */
+  --slate-soft: #7a8888;     /* disabled, placeholders */
+
+  /* lines */
+  --line: rgba(21, 52, 58, 0.14);
+  --line-strong: rgba(21, 52, 58, 0.34);
+
+  /* signal */
+  --ochre: #b8822a;          /* selection, active, focus */
+  --ochre-ink: #7a5411;      /* ochre when used as text */
+  --ochre-wash: #efe4cb;
+  --moss: #4d7a4b;
+  --moss-wash: #dde8d9;
+  --carmine: #9e2b3a;
+  --carmine-wash: #f0d9dc;
+
+  /* strata tints: oldest (deep) to newest (pale) */
+  --s1: #2e5a61;
+  --s2: #4f7b80;
+  --s3: #7a9ea0;
+  --s4: #a5bfbd;
+  --s5: #c9d6d3;
+
+  /* type */
+  --font-ui: "Schibsted Grotesk", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --t-xs: 0.8125rem;   /* 13 */
+  --t-sm: 0.9375rem;   /* 15 */
+  --t-md: 1.125rem;    /* 18 */
+  --t-lg: 1.375rem;    /* 22 */
+  --t-xl: 1.75rem;     /* 28 */
+
+  /* space, 4px base */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+
+  /* shape: two radii on purpose */
+  --r-control: 2px;
+  --r-panel: 6px;
+
+  --rail-w: 248px;
+  --content-max: 1240px;
+
+  --shadow-modal: 0 24px 60px -12px rgba(21, 52, 58, 0.45);
+}

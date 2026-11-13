@@ -1,0 +1,31 @@
+{{define "content"}}{{with .Data}}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/">Repositories</a><span class="sep">/</span><span aria-current="page">{{.S.Repo.Name}}</span></nav>
+<header class="page-head tight">
+  <div>
+    <div class="title-row"><h1>{{.S.Repo.Name}}</h1>{{template "status" .S}}</div>
+    <p class="lede mono">{{.S.Repo.Path}}</p>
+  </div>
+  <div class="actions">
+    <span class="sync-state small{{if .S.Repo.Unreachable}} failed{{end}}">{{template "sync_state" .S.Repo}}</span>
+    <button type="button" class="btn" data-needs-idle hx-post="/repos/{{.S.Repo.ID}}/sync" hx-swap="none" title="Read the repository again and refresh the saved data">Sync now</button>
+    <a class="btn" href="/settings">Edit repository</a>
+  </div>
+</header>
+{{range .Notices}}<div class="notice {{.Kind}}" role="alert"><div><strong>{{.Title}}</strong>{{.Body}}{{if .Details}}<br><span class="mono">{{.Details}}</span>{{end}}</div></div>
+{{end}}
+<section class="panel overview" aria-label="Repository overview">
+  <dl class="stat-strip">{{range .Facts}}<div><dt>{{.Label}}</dt><dd{{if eq .Label "Next cleanup"}} data-fact="next-cleanup"{{end}}>{{.Value}}{{if .Sub}}<span class="sub">{{.Sub}}</span>{{end}}</dd></div>{{end}}</dl>
+  {{if .S.Count}}{{template "chart_panel" .Chart}}{{else}}
+  <div class="empty">{{template "empty_art"}}<div><h3>No snapshots yet</h3><p>Nothing has been backed up to this repository. Run a backup into it and the first snapshot appears here after the next data update.</p>
+    <p class="mono small" style="margin-top:var(--sp-3);color:var(--petrol)">restic -r {{.S.Repo.Path}} backup &lt;folder&gt;</p></div></div>
+  {{end}}
+</section>
+<div role="tablist" class="tabs" aria-label="Repository sections">
+  <button type="button" role="tab" id="tab-snapshots" data-tab="snapshots" aria-controls="panel-snapshots">Snapshots<span class="count">{{num .S.Count}}</span></button>
+  <button type="button" role="tab" id="tab-cleanup" data-tab="cleanup" aria-controls="panel-cleanup">Cleanup<span class="count">{{.TabLabel}}</span></button>
+</div>
+<div role="tabpanel" id="panel-snapshots" aria-labelledby="tab-snapshots">
+  {{if .S.Count}}{{template "snapshot_panel" .Snapshots}}{{else}}<p class="muted">Snapshots, their files and downloads will be listed here after the first backup.</p>{{end}}
+</div>
+<div role="tabpanel" id="panel-cleanup" aria-labelledby="tab-cleanup" hidden>{{template "cleanup_panel" .Cleanup}}</div>
+{{end}}{{end}}

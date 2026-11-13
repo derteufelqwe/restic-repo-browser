@@ -1,0 +1,101 @@
+{{define "cleanup_panel"}}
+{{if not .Reachable}}<div class="notice warn"><div><strong>Cleanup cannot run right now</strong>The repository is unreachable.</div></div>{{end}}
+{{if .FailStreak}}<div class="notice error" role="alert"><div><strong>The last {{.FailStreak}} {{plural .FailStreak "run" "runs"}} failed</strong>{{.S.LastRun.Summary}} Old snapshots are not being removed.</div></div>{{end}}
+<div id="cleanup-body">{{template "cleanup_body" .}}</div>
+<section class="panel" style="margin-top:var(--sp-5)" aria-labelledby="rh-h">
+  <div class="panel-head"><h2 id="rh-h">Run history</h2></div>
+  {{template "cleanup_runs" .Runs}}
+</section>
+{{end}}
+
+{{define "cleanup_body"}}{{if .Job}}
+<section class="panel" id="cleanup-view" aria-labelledby="cl-h" data-tab-label="{{.TabLabel}}" data-next-run="{{if .Job.Next.IsZero}}Paused{{else}}{{runtime .Job.Next}}{{end}}">
+  <div class="panel-head"><h2 id="cl-h">Cleanup job</h2>
+    <div class="head-actions"><span class="small muted" id="cleanup-status">{{.Runs.Status}}</span>
+      <button class="btn sm" type="button" data-needs-idle hx-post="/repos/{{.S.Repo.ID}}/cleanup/run" hx-target="#cleanup-runs" hx-swap="outerHTML" {{if not .Reachable}}disabled data-force-disabled{{end}}>{{template "icon_play"}}Run now</button>
+      <button class="btn sm primary" type="button" hx-get="/repos/{{.S.Repo.ID}}/cleanup/edit" hx-target="#cleanup-body" hx-swap="innerHTML">Edit</button></div></div>
+  <dl class="setting-grid">{{range .Items}}<div><dt>{{.Label}}</dt><dd>{{.Value}}{{if .Sub}}<span class="sub{{if eq .Label "Schedule"}} mono{{end}}">{{.Sub}}</span>{{end}}</dd></div>{{end}}</dl>
+</section>
+{{else}}
+<section class="panel" data-tab-label="Not set up"><div class="empty">{{template "empty_art"}}<div><h3>No cleanup job yet</h3><p>Without one, old snapshots stay forever and the repository keeps growing. Set a schedule and keep rules to thin them out automatically.</p><div class="actions"><button class="btn primary" type="button" hx-get="/repos/{{.S.Repo.ID}}/cleanup/edit" hx-target="#cleanup-body" hx-swap="innerHTML">Set up cleanup</button></div></div></div></section>
+{{end}}{{end}}
+
+{{define "cleanup_runs"}}<div id="cleanup-runs" {{if .Running}}hx-get="/repos/{{.RepoID}}/cleanup/runs" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>{{template "runs_list" .}}</div>
+{{if and .OOB .Status}}<span class="small muted" id="cleanup-status" hx-swap-oob="true">{{.Status}}</span>{{end}}{{end}}
+
+{{define "runs_list"}}{{if not .Runs}}<p class="muted" style="padding:var(--sp-5)">No runs yet.</p>{{else}}{{$showRepo := .ShowRepo}}
+<div class="runs">{{range .Runs}}<details><summary>
+  <span class="caret"></span>
+  <span>{{date .StartedAt}}<span class="sub muted" style="display:block;font-size:var(--t-xs)">{{rel .StartedAt}}</span></span>
+  <span class="col-detail">{{if $showRepo}}<b>{{.RepoName}}</b><span class="muted" style="display:block;font-size:var(--t-xs)">{{.Summary}}</span>{{else}}{{if eq (printf "%s" .Status) "running"}}Running…{{else}}{{.Summary}}{{end}}{{end}}</span>
+  <span class="col-dur muted">{{runtime_of .}}</span>
+  <span class="status {{.Status.CSSClass}}"><span class="dot {{.Status.CSSClass}}"></span>{{.Status.Label}}</span></summary>
+  <pre class="{{if eq (printf "%s" .Status) "failed"}}fail{{end}}">{{.Log}}</pre></details>{{end}}</div>
+{{end}}{{end}}
+
+{{define "cleanup_edit"}}
+<form id="cleanup-form" class="cleanup" autocomplete="off" hx-post="/repos/{{.RepoID}}/cleanup" hx-target="#cleanup-body" hx-swap="innerHTML">
+  <section class="panel" aria-labelledby="cl-h">
+    <div class="panel-head"><h2 id="cl-h">{{if .IsNew}}Set up cleanup job{{else}}Edit cleanup job{{end}}</h2><span class="small muted">{{.Status}}</span></div>
+    <div class="panel-body tight">
+      <fieldset>
+        <legend>When</legend>
+        <div class="field"><label for="cron">Schedule (cron)</label>
+          <input id="cron" name="cron" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="30 3 * * *" value="{{.Cron}}" required>
+          <span class="hint">Five fields: minute, hour, day of month, month, weekday. Example: <span class="mono">30 3 * * *</span> runs every day at 03:30.</span></div>
+        <div class="cron-meaning" id="cron-echo" aria-live="polite">{{template "cron_echo" .Preview}}</div>
+        {{with .Errors.cron}}<p class="small" style="color:var(--carmine)">{{.}}</p>{{end}}
+      </fieldset>
+
+      <fieldset>
+        <legend>What to keep</legend>
+        <p class="muted small hint-line">A snapshot is kept if any rule matches it. Everything else is forgotten. Rules apply separately to each host and backup path.</p>
+        <div class="keep-grid">
+          <div class="field"><label for="k-last">Latest</label><input id="k-last" name="last" type="number" min="0" value="{{.Keep.Last}}"></div>
+          <div class="field"><label for="k-hourly">Hourly</label><input id="k-hourly" name="hourly" type="number" min="0" value="{{.Keep.Hourly}}"></div>
+          <div class="field"><label for="k-daily">Daily</label><input id="k-daily" name="daily" type="number" min="0" value="{{.Keep.Daily}}"></div>
+          <div class="field"><label for="k-weekly">Weekly</label><input id="k-weekly" name="weekly" type="number" min="0" value="{{.Keep.Weekly}}"></div>
+          <div class="field"><label for="k-monthly">Monthly</label><input id="k-monthly" name="monthly" type="number" min="0" value="{{.Keep.Monthly}}"></div>
+          <div class="field"><label for="k-yearly">Yearly</label><input id="k-yearly" name="yearly" type="number" min="0" value="{{.Keep.Yearly}}"></div>
+        </div>
+        <div class="notice error" id="no-rule" {{if not .Preview.NoRule}}hidden{{end}}><div><strong>Add at least one keep rule</strong>A job without keep rules would forget every snapshot.</div></div>
+      </fieldset>
+
+      <fieldset class="after">
+        <legend>After forgetting</legend>
+        <label class="toggle"><input type="checkbox" name="prune" {{if .Prune}}checked{{end}}><span class="track"></span><span><b>Prune the repository</b><small>Delete data that no snapshot uses any more and free the space.</small></span></label>
+        <label class="toggle inline-toggle"><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}><span class="track"></span><span><b>Job is active</b><small>Turn off to pause the schedule.</small></span></label>
+      </fieldset>
+      <div class="form-actions">
+        <button class="btn primary" type="submit" id="save" {{if .Preview.SaveBlocked}}disabled{{end}}>{{if .IsNew}}Create cleanup job{{else}}Save changes{{end}}</button>
+        <button class="btn" type="button" hx-get="/repos/{{.RepoID}}/cleanup" hx-target="#cleanup-body" hx-swap="innerHTML">Cancel</button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel" aria-labelledby="pv-h">
+    <div class="panel-head"><h2 id="pv-h">Preview</h2><span class="muted small">Based on {{num .Snapshots}} snapshots</span></div>
+    <div class="panel-body tight" id="cleanup-preview" hx-post="/repos/{{.RepoID}}/cleanup/preview" hx-trigger="input from:closest form delay:250ms, change from:closest form" hx-include="closest form" hx-target="this" hx-swap="innerHTML">
+      {{template "cleanup_preview_body" .Preview}}
+    </div>
+  </aside>
+</form>
+{{end}}
+
+{{define "cron_echo"}}{{if .CronOK}}<b>{{.CronEcho}}.</b><span class="next-runs">Next runs: {{range $i, $r := .NextRuns}}{{if $i}}; {{end}}{{$r}}{{end}}.</span>{{else}}<span style="color:var(--carmine)">This is not a valid schedule. Use five fields: minute, hour, day of month, month and weekday.</span>{{end}}{{end}}
+
+{{define "cleanup_preview_body"}}
+{{if .NoSnapshots}}<p class="verdict">Nothing to preview until the first backup.</p>
+{{else if .Ready}}
+<p class="verdict" aria-live="polite">Keeps <span class="keep">{{num .Kept}}</span> of {{num .Total}} snapshots. Forgets <span class="gone">{{num .Gone}}</span>.</p>
+<p class="small muted">{{if .PruneOn}}Prune can free at most {{.Freed}}. Data that kept snapshots still use stays, so the real figure is usually lower.{{else}}Prune is off, so no space is freed until a prune runs.{{end}}</p>
+{{if .ChartJSON}}<div class="chart-box short"><canvas data-retention="{{.ChartJSON}}" role="img" aria-label="Snapshots per period, split into kept and forgotten"></canvas></div>{{end}}
+<ul class="reasons">{{range .Reasons}}<li><span>{{.Label}}</span><b>{{num .Count}}</b></li>{{end}}<li class="muted"><span>A snapshot can match several rules</span><span></span></li></ul>
+{{else}}<p class="verdict">Add a keep rule to see what happens.</p>{{end}}
+{{end}}
+
+{{define "cleanup_preview"}}{{template "cleanup_preview_body" .}}
+<div class="cron-meaning" id="cron-echo" aria-live="polite" hx-swap-oob="true">{{template "cron_echo" .}}</div>
+<div class="notice error" id="no-rule" {{if not .NoRule}}hidden{{end}} hx-swap-oob="true"><div><strong>Add at least one keep rule</strong>A job without keep rules would forget every snapshot.</div></div>
+<button class="btn primary" type="submit" id="save" {{if .SaveBlocked}}disabled{{end}} hx-swap-oob="true">{{if .IsNew}}Create cleanup job{{else}}Save changes{{end}}</button>
+{{end}}

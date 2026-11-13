@@ -1,0 +1,31 @@
+{{define "repo_form"}}<form {{if .ID}}hx-post="/settings/repos/{{.ID}}"{{else}}hx-post="/settings/repos"{{end}} hx-target="#dlg-content" hx-swap="innerHTML">
+  <div class="dlg-head"><h2 id="dlg-title">{{if .ID}}Edit {{.Name}}{{else}}Add repository{{end}}</h2></div>
+  <div class="dlg-body">
+    {{if .Error}}<div class="notice error" role="alert"><div><strong>{{.Error}}</strong>{{if .CanForce}}You can still save it, for example when the disk is not plugged in yet.{{end}}</div></div>{{end}}
+    <div class="field"><label for="r-name">Name</label><input id="r-name" name="name" type="text" value="{{.Name}}" required>{{with .NameErr}}<span class="hint" style="color:var(--carmine)">{{.}}</span>{{end}}</div>
+    <div class="field"><label for="r-path">Path</label>
+      <div class="input-row"><input id="r-path" name="path" class="mono" type="text" placeholder="/mnt/backup/my-repo" value="{{.Path}}" required>
+        <button type="button" class="btn" hx-get="/fs" hx-include="#r-path" hx-target="#fs-picker" hx-swap="outerHTML" hx-indicator="this">Browse…</button></div>
+      <span class="hint">Folder on this server that holds the restic repository.</span>
+      <div id="fs-picker"></div></div>
+    <div class="field" style="margin-bottom:0"><label for="r-pw">Repository password</label><input type="password" id="r-pw" name="password" autocomplete="off" {{if not .ID}}required{{end}}><span class="hint">{{if .ID}}Leave empty to keep the current password.{{else}}Stored encrypted on this server.{{end}}</span></div>
+  </div>
+  <div class="dlg-foot">
+    {{if .ID}}<button type="button" class="btn quiet" style="margin-right:auto;color:var(--carmine)" hx-post="/settings/repos/{{.ID}}/delete" hx-confirm="Remove {{.Name}} from this application? The repository itself is not touched.">Remove</button>{{end}}
+    <button type="button" class="btn quiet" data-close-dialog>Cancel</button>
+    {{if .CanForce}}<button type="submit" class="btn" name="force" value="1">Save anyway</button>{{end}}
+    <button type="submit" class="btn primary">Save repository</button>
+  </div>
+</form>{{end}}
+
+{{define "fs_picker"}}<div id="fs-picker" class="fs-picker">
+  <div class="fs-head"><span class="mono fs-path">{{if .Drives}}Drives{{else}}{{.Path}}{{end}}</span>{{if .IsRepo}}<span class="tag">restic repository</span>{{end}}<button type="button" class="btn sm quiet" data-fs-close>Close</button></div>
+  {{if .Err}}<p class="small" style="color:var(--carmine);padding:var(--sp-2) var(--sp-3)">{{.Err}}</p>{{end}}
+  <ul class="fs-list">
+    {{if .Parent}}<li><button type="button" class="fs-item" hx-get="/fs?path={{pq .Parent}}" hx-target="#fs-picker" hx-swap="outerHTML" hx-indicator="#fs-picker">{{template "icon_folder"}}<span>.. (up)</span></button></li>{{end}}
+    {{range .Entries}}<li><button type="button" class="fs-item" hx-get="/fs?path={{pq .Path}}" hx-target="#fs-picker" hx-swap="outerHTML" hx-indicator="#fs-picker">{{template "icon_folder"}}<span>{{.Name}}</span>{{if .Repo}}<span class="tag">restic repository</span>{{end}}</button></li>
+    {{else}}{{if not .Err}}<li class="muted small" style="padding:var(--sp-2) var(--sp-3)">No sub-folders.</li>{{end}}{{end}}
+  </ul>
+  {{if .More}}<p class="small muted" style="padding:var(--sp-2) var(--sp-3)">{{num .More}} more folders are not shown. Type the path instead.</p>{{end}}
+  {{if not .Drives}}<div class="fs-foot"><button type="button" class="btn sm primary" data-fs-pick="{{.Path}}">Use this folder</button></div>{{end}}
+</div>{{end}}

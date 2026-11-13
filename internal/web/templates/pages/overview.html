@@ -1,0 +1,17 @@
+{{define "content"}}{{with .Data}}
+<header class="page-head">
+  <div>
+    <h1>Repositories</h1>
+    <p class="lede">{{.Summary}}{{if not .LastSync.IsZero}} Last sync {{rel .LastSync}}.{{end}}</p>
+  </div>
+  <div class="actions">
+    <label class="sort-label" for="sort">Sort by</label>
+    <select id="sort" name="sort" style="width:auto" hx-get="/" hx-trigger="change" hx-target="#repo-cards" hx-swap="outerHTML" hx-push-url="true">
+      {{$cur := .Sort}}{{range .Sorts}}<option value="{{.Key}}" {{if eq .Key $cur}}selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <button type="button" class="btn" data-needs-idle hx-post="/sync" hx-swap="none" title="Read every repository again and refresh the saved data">Sync all</button>
+    <a class="btn" href="/settings">Add repository</a>
+  </div>
+</header>
+{{template "repo_cards" .}}
+{{end}}{{end}}

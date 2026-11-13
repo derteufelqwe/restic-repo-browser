@@ -1,0 +1,25 @@
+{{define "repo_cards"}}<section class="cards" id="repo-cards" aria-label="All repositories">
+{{range .Cards}}{{$s := .S}}
+<article class="repo-card {{$s.State.CSSClass}}{{if $s.Repo.Unreachable}} is-unreachable{{end}}">
+  <div class="ident">
+    <div class="name-row">
+      <h2><a href="/repos/{{$s.Repo.ID}}">{{$s.Repo.Name}}</a></h2>
+      {{template "status" $s}}
+    </div>
+    <p class="url mono">{{$s.Repo.Path}}</p>
+    {{if $s.Repo.Unreachable}}<p class="err">{{$s.Repo.RefreshError}}</p>{{end}}
+  </div>
+  <div class="spark" title="Data added per snapshot, last 30 snapshots">
+    {{if .Spark}}<div class="spark-box"><canvas data-spark="{{.Spark}}"{{if $s.Repo.Unreachable}} data-muted{{end}}></canvas></div>{{else}}<p class="small muted spark-empty">No history yet</p>{{end}}
+  </div>
+  <dl class="stats">
+    <div><dt>Last backup</dt><dd>{{with $s.Last}}<b title="{{date .Time}}">{{rel .Time}}</b>{{else}}<b>Never</b>{{end}}</dd></div>
+    <div><dt>Snapshots</dt><dd><b>{{num $s.Count}}</b></dd></div>
+    <div><dt>Repository size</dt><dd><b>{{bytes $s.Repo.SizeBytes}}</b></dd></div>
+    <div><dt>Last snapshot size</dt><dd><b>{{with $s.Last}}{{with .Size}}{{bytes .}}{{else}}Unknown{{end}}{{else}}None{{end}}</b></dd></div>
+  </dl>
+</article>
+{{else}}
+<section class="panel"><div class="empty">{{template "empty_art"}}<div><h3>No repositories yet</h3><p>Add the folder of a restic repository and its password. Snapshots, sizes and history appear here once the first data update has run.</p><div class="actions"><a class="btn primary" href="/settings">Add repository</a></div></div></div></section>
+{{end}}
+</section>{{end}}

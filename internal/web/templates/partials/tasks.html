@@ -1,0 +1,6 @@
+{{define "task_banner"}}<div id="task-banner" class="task-banner{{if not .Running}} is-idle{{end}}" role="status" aria-live="polite" data-running="{{.Running}}" data-last-id="{{.LastID}}" hx-get="/tasks/banner" hx-trigger="{{if .Running}}every 1s{{else}}every 3s{{end}}, task-changed from:body" hx-swap="outerHTML">
+{{if .Running}}  <div class="task-text"><b>{{.Title}}</b>{{with .Text}}<span>{{.}}</span>{{end}}</div>
+  <div class="progress{{if lt .Percent 0}} indeterminate{{end}}" role="progressbar" aria-label="{{.Title}}"{{if ge .Percent 0}} aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{.Percent}}"{{end}}><span{{if ge .Percent 0}} style="width:{{.Percent}}%"{{end}}></span></div>
+{{end}}</div>{{end}}
+
+{{define "sync_state"}}{{if .NeverSynced}}Never synced{{else if .Unreachable}}Sync failed {{rel .RefreshedAt}}{{else}}Synced {{rel .RefreshedAt}}{{end}}{{end}}

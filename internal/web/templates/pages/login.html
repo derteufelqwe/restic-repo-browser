@@ -1,0 +1,28 @@
+{{define "login_document"}}<!doctype html>
+<html lang="en">
+<head>
+{{template "head"}}
+<title>Sign in - Restic Repo Browser</title>
+</head>
+<body class="login">
+<div class="login-wrap">
+  <div class="login-art" id="art" data-login-art>
+    <p class="caption">Every snapshot is a layer. Browse any of them and take only what you need.</p>
+  </div>
+  <div class="login-form">
+    <form method="post" action="/login">
+      <div class="brand"><img src="/static/img/mark.svg" alt=""><b>Restic Repo Browser<span>Read-only view</span></b></div>
+      <h1>Sign in</h1>
+      {{if not .Configured}}
+      <div class="notice warn" role="alert"><div><strong>No password has been set yet</strong>Run <span class="mono">restic-browser set-password</span> on the server, then reload this page.</div></div>
+      {{else}}
+      <p class="lede">Enter the password to open your repositories.</p>
+      {{if .Error}}<div class="notice error" role="alert"><div><strong>{{.Error}}</strong></div></div>{{end}}
+      <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" autofocus required></div>
+      <button class="btn primary" type="submit">Sign in</button>
+      {{end}}
+    </form>
+  </div>
+</div>
+</body>
+</html>{{end}}

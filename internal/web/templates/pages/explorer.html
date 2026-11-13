@@ -1,0 +1,23 @@
+{{define "content"}}{{with .Data}}
+<nav class="crumbs" aria-label="Breadcrumb"><a href="/">Repositories</a><span class="sep">/</span><a href="/repos/{{.S.Repo.ID}}">{{.S.Repo.Name}}</a><span class="sep">/</span><span aria-current="page">Snapshot {{.Snap.ShortID}}</span></nav>
+{{if .Notice}}
+<div class="notice error"><div><strong>This repository cannot be reached</strong>Snapshots cannot be browsed until it is back.<br><span class="mono">{{.Notice}}</span></div></div>
+{{else}}
+<header class="page-head">
+  <div>
+    <h1>Snapshot <span class="mono" style="font-weight:600">{{.Snap.ShortID}}</span></h1>
+    <p class="lede">Taken {{date .Snap.Time}} ({{rel .Snap.Time}}) on {{.Snap.Host}}.{{with .Snap.Size}} {{bytes .}}{{end}}{{with .Snap.Files}} in {{num64 .}} files.{{end}}
+      {{range .Snap.Tags}}<span class="tag">{{.}}</span> {{end}}</p>
+    <p class="small muted" style="margin-top:var(--sp-1)">Backed up from {{range $i, $p := .Snap.Paths}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{end}}</p>
+  </div>
+  <div class="actions">{{template "download_menu" (dict "Zip" .Zip "TarGz" .TarGz "Class" "primary" "Label" "Download snapshot")}}</div>
+</header>
+<section class="panel">
+  <div class="browser">
+    <nav class="tree" id="tree" aria-label="Folders"><ul role="tree">{{template "tree_node" .Tree}}</ul></nav>
+    {{template "listing_pane" .Pane}}
+  </div>
+</section>
+<aside class="drawer" id="drawer" aria-label="Item details" aria-hidden="true"></aside>
+{{end}}
+{{end}}{{end}}

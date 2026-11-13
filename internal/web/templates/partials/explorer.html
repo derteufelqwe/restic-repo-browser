@@ -1,0 +1,59 @@
+{{define "tree_node"}}<li role="treeitem" aria-expanded="{{.Open}}" class="{{if .Current}}is-current{{end}}" data-path="{{.Path}}"><div class="row">
+  {{if .Open}}<button type="button" class="twist" data-toggle aria-label="Collapse {{.Name}}"></button>{{else}}<button type="button" class="twist" hx-get="{{.Base}}/tree?path={{pq .Path}}&root={{pq .Root}}" hx-indicator="this" hx-target="closest li" hx-swap="outerHTML" aria-label="Expand {{.Name}}"></button>{{end}}
+  <a class="node" href="?path={{.Path}}&root={{.Root}}" hx-get="{{.Base}}/listing?path={{pq .Path}}&root={{pq .Root}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-push-url="?path={{.Path}}&root={{.Root}}" title="{{.Name}}">{{template "icon_folder"}}<span style="overflow:hidden;text-overflow:ellipsis">{{.Name}}</span></a></div>
+  {{if and .Open .Children}}<ul role="group">{{range .Children}}{{template "tree_node" .}}{{end}}</ul>{{end}}</li>{{end}}
+
+{{define "listing_pane"}}{{$base := .Base}}{{$root := .Root}}<div id="listing-pane" data-path="{{.Path}}" data-root="{{.Root}}">
+  <div class="listing-head">
+    <div class="pathbar" id="pathbar" aria-label="Current folder">
+      {{range $i, $c := .Crumbs}}{{if $i}}<span class="sep">/</span>{{end}}<button type="button"{{if eq $c.Path $.Path}} aria-current="page"{{end}} hx-get="{{$base}}/listing?path={{pq $c.Path}}&root={{pq $root}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-push-url="?path={{$c.Path}}&root={{$root}}">{{$c.Name}}</button>{{end}}
+    </div>
+    <input type="search" id="lf" placeholder="Filter this folder" aria-label="Filter this folder" style="width:200px;min-height:32px;padding:4px 10px">
+  </div>
+  {{if .Err}}
+  <div class="notice error" style="margin:var(--sp-4)"><div><strong>This folder cannot be read</strong><span class="mono">{{.Err}}</span></div></div>
+  {{else if not .Entries}}
+  <div class="empty" style="padding:var(--sp-5)">{{template "empty_art"}}<div><h3>This folder is empty</h3><p>Nothing was backed up inside it.</p></div></div>
+  {{else}}
+  <form id="sel-form" method="post" action="{{$base}}/download">
+    <div class="table-wrap"><table class="data listing" id="listing">
+      <thead><tr>
+        <th class="check"><input class="box" type="checkbox" id="sel-all" aria-label="Select all"></th>
+        <th scope="col"><button type="button" class="sort" data-sort="name">Name</button></th>
+        <th scope="col" class="num"><button type="button" class="sort" data-sort="size">Size</button></th>
+        <th scope="col"><button type="button" class="sort" data-sort="mtime">Modified</button></th>
+        <th scope="col">Mode</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>
+      {{range .Entries}}<tr data-name="{{.Name}}" data-dir="{{.Dir}}" data-size="{{if .Size}}{{.Size}}{{else}}-1{{end}}" data-mtime="{{.MTime.Unix}}">
+        <td class="check"><input class="box" type="checkbox" name="path" value="{{.Path}}" aria-label="Select {{.Name}}"></td>
+        <td>{{if .Dir}}<button type="button" class="entry" hx-get="{{$base}}/listing?path={{pq .Path}}&root={{pq $root}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-push-url="?path={{.Path}}&root={{$root}}">{{template "icon_folder"}}<span>{{.Name}}</span></button>
+          {{else}}<button type="button" class="entry" hx-get="{{$base}}/details?path={{pq .Path}}&root={{pq $root}}" hx-target="#drawer" hx-swap="innerHTML">{{template "icon_file"}}<span>{{.Name}}</span></button>{{end}}</td>
+        <td class="num">{{with .Size}}{{bytes .}}{{else}}<span class="muted">&ndash;</span>{{end}}</td>
+        <td>{{day .MTime}}</td><td class="mono">{{.Mode}}</td>
+        <td class="actions"><a class="btn sm quiet" href="{{download $base .Path "zip"}}" aria-label="Download {{.Name}}">{{template "icon_download"}}Download</a></td>
+      </tr>{{end}}
+      </tbody>
+    </table></div>
+    {{if .Truncated}}<p class="small muted" style="padding:var(--sp-3) var(--sp-4)">{{num .Truncated}} more entries are not shown. Download the folder to get everything.</p>{{end}}
+    <div class="selbar" id="selbar" hidden>
+      <span class="sum"><span id="sel-count"></span><small>Folder sizes are worked out during download.</small></span>
+      <button type="button" class="btn sm" data-clear-selection>Clear</button>
+      <button type="submit" class="btn sm" name="format" value="tar.gz">Download as .tar.gz</button>
+      <button type="submit" class="btn sm primary" name="format" value="zip">{{template "icon_download"}}Download as .zip</button>
+    </div>
+  </form>
+  {{end}}
+</div>{{end}}
+
+{{define "details"}}<header><div><h2>{{.Node.Name}}</h2><p class="muted small">{{if .Node.IsDir}}Folder{{else}}File{{end}} in snapshot {{.Snap.ShortID}}</p></div><button type="button" class="btn sm quiet" data-close-drawer aria-label="Close details">Close</button></header>
+<div class="body">
+  {{if .Preview}}<img src="{{.Base}}/preview?path={{.Node.Path}}" alt="Preview of {{.Node.Name}}" style="max-width:100%;display:block;margin-bottom:var(--sp-4);border:1px solid var(--line)">{{end}}
+  <dl class="facts">
+    <dt>Path</dt><dd class="mono">{{.Rel}}</dd>
+    <dt>Size</dt><dd>{{with .Node.Size}}{{bytes .}}<span class="sub">{{num64 .}} bytes</span>{{else}}Worked out on download{{end}}</dd>
+    <dt>Modified</dt><dd>{{date .Node.MTime}}</dd>
+    <dt>Mode</dt><dd class="mono">{{.Node.Permissions}}</dd>
+    <dt>Owner</dt><dd class="mono">{{.Owner}}</dd>
+  </dl>
+</div>
+<footer><a class="btn primary" href="{{download .Base .Node.Path "zip"}}">{{template "icon_download"}}Download {{if .Node.IsDir}}folder as .zip{{else}}file{{end}}</a><button type="button" class="btn" data-close-drawer>Close</button></footer>{{end}}

@@ -1,0 +1,44 @@
+{{define "content"}}{{with .Data}}
+<header class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p class="lede">Repositories on this server's disks and when they are synced.</p>
+  </div>
+  <div class="actions"><button type="button" class="btn primary" hx-get="/settings/repos/new" hx-target="#dlg-content" hx-swap="innerHTML">Add repository</button></div>
+</header>
+
+<section class="panel" aria-label="Repositories" style="margin-bottom:var(--sp-6)">
+  <div class="table-wrap"><table class="data">
+    <thead><tr><th scope="col">Name</th><th scope="col">Path</th><th scope="col">Last sync</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+      {{range .Repos}}<tr>
+        <td><b>{{.Name}}</b></td>
+        <td class="mono" style="word-break:break-all">{{.Path}}</td>
+        <td>{{if .NeverSynced}}<span class="muted">Never</span>{{else}}<span title="{{date .RefreshedAt}}">{{rel .RefreshedAt}}</span><span class="sub{{if .Unreachable}} failed{{end}}">{{if .Unreachable}}Failed: {{.RefreshError}}{{else}}Succeeded{{end}}</span>{{end}}</td>
+        <td>{{template "status" .}}</td>
+        <td class="actions"><div class="btn-row">
+          <button type="button" class="btn sm quiet" hx-post="/settings/repos/{{.ID}}/test" hx-swap="none" title="Check that the repository opens with its password">Test</button>
+          <button type="button" class="btn sm quiet" data-needs-idle hx-post="/repos/{{.ID}}/sync" hx-swap="none">Sync</button>
+          <button type="button" class="btn sm" hx-get="/settings/repos/{{.ID}}/edit" hx-target="#dlg-content" hx-swap="innerHTML">Edit</button>
+        </div></td>
+      </tr>{{else}}<tr><td colspan="5" class="muted">No repositories yet. Add one to get started.</td></tr>{{end}}
+    </tbody>
+  </table></div>
+  <p class="small muted" style="padding:var(--sp-3) var(--sp-5) var(--sp-4)">Repository passwords are stored encrypted in this application's database.</p>
+</section>
+
+<section class="panel" aria-labelledby="cache-h">
+  <div class="panel-head"><h2 id="cache-h">Sync</h2></div>
+  <div class="panel-body">
+    <p class="muted" style="max-width:62ch;margin-bottom:var(--sp-4)">Everything shown in the overview, the repository pages and the Jobs page comes from a saved copy of the repository data. A sync reads every repository and updates that copy once a day. Only browsing and downloading snapshot files read the repository live. Only one sync or cleanup runs at a time.</p>
+    <form class="update-form" hx-post="/settings/cache" hx-swap="none">
+      <div class="field" style="margin-bottom:0"><label for="refresh-time">Sync every day at</label><input id="refresh-time" name="refresh_time" type="time" value="{{.RefreshTime}}" required></div>
+      <button class="btn" type="submit">Save time</button>
+      <button class="btn" type="button" data-needs-idle hx-post="/sync" hx-swap="none">Sync all now</button>
+    </form>
+    <p class="small muted" style="margin-top:var(--sp-3)">{{if .LastUpdate.IsZero}}No sync has completed yet.{{else}}Last successful sync: {{date .LastUpdate}} ({{rel .LastUpdate}}).{{end}}</p>
+  </div>
+</section>
+
+<dialog id="repo-dialog" aria-labelledby="dlg-title"><div id="dlg-content"></div></dialog>
+{{end}}{{end}}
