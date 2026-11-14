@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -61,11 +60,14 @@ func NewWithRunner(r Runner, cacheDir string, opts ...Option) *Client {
 }
 
 // target translates a repository reference into restic's -r argument. This is
-// the place to add `rest:<url>` or `rclone:<remote>:<path>` for other kinds.
+// the place to add `rest:<url>` for further kinds. For rclone, restic starts
+// the rclone program itself, which must be configured on the host.
 func (c *Client) target(ref backend.Ref) (string, error) {
 	switch ref.Kind {
 	case domain.BackendLocal:
 		return ref.Location, nil
+	case domain.BackendRclone:
+		return "rclone:" + ref.Location, nil
 	}
 	return "", backend.Unsupported("repository kind %q is not supported", ref.Kind)
 }
@@ -148,10 +150,7 @@ func (c *Client) SnapshotSize(ctx context.Context, ref backend.Ref, snapshotID s
 	if err != nil {
 		return backend.SnapshotSize{}, err
 	}
-	var st struct {
-		TotalSize      int64 `json:"total_size"`
-		TotalFileCount int64 `json:"total_file_count"`
-	}
+	var st statsJSON
 	if err := json.Unmarshal(out, &st); err != nil {
 		return backend.SnapshotSize{}, fmt.Errorf("restic: parse stats: %w", err)
 	}
@@ -189,12 +188,24 @@ func (c *Client) Locks(ctx context.Context, ref backend.Ref) ([]domain.Lock, err
 	return locks, nil
 }
 
-// RepoSize adds up the files of a local repository.
-func (c *Client) RepoSize(_ context.Context, ref backend.Ref) (int64, error) {
-	if ref.Kind != domain.BackendLocal {
-		return 0, backend.Unsupported("the size of %q repositories is not available", ref.Kind)
+// RepoSize is the space the repository occupies. A local repository is
+// measured on disk; a remote one is asked for the size of its data.
+func (c *Client) RepoSize(ctx context.Context, ref backend.Ref) (int64, error) {
+	switch ref.Kind {
+	case domain.BackendLocal:
+		return dirSize(ref.Location)
+	case domain.BackendRclone:
+		out, err := c.capture(ctx, ref, "stats", "--json", "--mode", "raw-data", "--no-lock")
+		if err != nil {
+			return 0, err
+		}
+		var st statsJSON
+		if err := json.Unmarshal(out, &st); err != nil {
+			return 0, fmt.Errorf("restic: parse stats: %w", err)
+		}
+		return st.TotalSize, nil
 	}
-	return dirSize(ref.Location)
+	return 0, backend.Unsupported("the size of %q repositories is not available", ref.Kind)
 }
 
 // List returns the direct children of dir inside a snapshot. dir uses forward
@@ -231,20 +242,7 @@ func (c *Client) List(ctx context.Context, ref backend.Ref, snapshotID, dir stri
 
 // Node finds a single entry of a snapshot by its path.
 func (c *Client) Node(ctx context.Context, ref backend.Ref, snapshotID, p string) (backend.Node, error) {
-	p = backend.CleanPath(p)
-	if p == "/" {
-		return backend.Node{Type: "dir", Path: "/"}, nil
-	}
-	nodes, err := c.List(ctx, ref, snapshotID, path.Dir(p))
-	if err != nil {
-		return backend.Node{}, err
-	}
-	for _, n := range nodes {
-		if n.Path == p {
-			return n, nil
-		}
-	}
-	return backend.Node{}, &backend.Error{Kind: backend.KindOther, Message: "path not found in snapshot: " + p}
+	return backend.NodeVia(ctx, c, ref, snapshotID, p)
 }
 
 // Dump writes a file's bytes, or a directory as a tar archive when asTar is set, to w.
@@ -258,6 +256,9 @@ func (c *Client) Dump(ctx context.Context, ref backend.Ref, snapshotID, p string
 
 // Forget removes the snapshots the keep rules do not match.
 func (c *Client) Forget(ctx context.Context, ref backend.Ref, keep domain.KeepPolicy) (backend.ForgetResult, error) {
+	if err := backend.RequireWritable(ref); err != nil {
+		return backend.ForgetResult{}, err
+	}
 	if keep.Empty() {
 		return backend.ForgetResult{}, errors.New("restic: refusing to forget without any keep rule")
 	}
@@ -286,6 +287,9 @@ var prunedRe = regexp.MustCompile(`(?m)^total prune:\s+\d+ blobs / (\S+ \S+)`)
 
 // Prune removes unreferenced data; restic's progress text goes to log.
 func (c *Client) Prune(ctx context.Context, ref backend.Ref, log io.Writer) (backend.PruneResult, error) {
+	if err := backend.RequireWritable(ref); err != nil {
+		return backend.PruneResult{}, err
+	}
 	var output bytes.Buffer
 	w := io.MultiWriter(log, &output)
 	if err := c.exec(ctx, ref, w, w, "prune", "--retry-lock", "5m"); err != nil {

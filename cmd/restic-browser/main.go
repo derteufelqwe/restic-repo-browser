@@ -21,6 +21,7 @@ import (
 	"golang.org/x/term"
 
 	"restic-repo-browser/internal/auth"
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/cache"
 	"restic-repo-browser/internal/config"
 	"restic-repo-browser/internal/jobs"
@@ -30,6 +31,10 @@ import (
 	"restic-repo-browser/internal/tasks"
 	"restic-repo-browser/internal/web"
 )
+
+// listingCacheNodes bounds the in-memory cache of snapshot folder listings
+// (entries over all folders; roughly a few dozen MB at most).
+const listingCacheNodes = 100_000
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -102,7 +107,7 @@ func serve(ctx context.Context, cfg config.Config, browseDir string, log *slog.L
 	refresher := cache.New(st, repos, tm, log)
 	runner := jobs.New(st, repos, refresher, tm, log)
 	handler, err := web.New(web.Deps{
-		Store: st, Explorer: repos, Cache: refresher, Jobs: runner, Tasks: tm, Auth: authSvc, Log: log, SecureCookies: cfg.Secure, BrowseDir: browseDir,
+		Store: st, Explorer: backend.NewListingCache(repos, listingCacheNodes), Cache: refresher, Jobs: runner, Tasks: tm, Auth: authSvc, Log: log, SecureCookies: cfg.Secure, BrowseDir: browseDir,
 	})
 	if err != nil {
 		return err

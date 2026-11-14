@@ -71,6 +71,12 @@ func TestRepoLifecycle(t *testing.T) {
 	if r.Backend != domain.BackendLocal {
 		t.Errorf("backend kind = %q, want local by default", r.Backend)
 	}
+	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Kind: domain.BackendRclone, Location: "gdrive:Backups/pics"}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ = s.Repo(ctx, id); r.Backend != domain.BackendRclone || r.Location != "gdrive:Backups/pics" {
+		t.Errorf("repo after switching to rclone = %+v", r)
+	}
 
 	// A failed refresh keeps the last known size and success time.
 	if err := s.SaveRefresh(ctx, id, RefreshResult{At: t0, Size: 500}); err != nil {
@@ -133,6 +139,30 @@ func TestSyncSnapshots(t *testing.T) {
 	_ = s.ReplaceLocks(ctx, id, nil)
 	if locks, _ := s.Locks(ctx, id); len(locks) != 0 {
 		t.Errorf("locks not cleared: %+v", locks)
+	}
+}
+
+func TestReadOnlyKeepsTheSavedJob(t *testing.T) {
+	s := open(t)
+	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Location: "/r", Password: "p"}, t0)
+	if r, _ := s.Repo(ctx, id); r.ReadOnly {
+		t.Fatal("repositories are writable by default")
+	}
+	job := domain.Job{RepoID: id, Cron: "30 3 * * *", Keep: domain.KeepPolicy{Last: 7, Daily: 30}, Prune: true, Enabled: true}
+	if err := s.SaveJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, readOnly := range []bool{true, false} {
+		if err := s.UpdateRepo(ctx, id, NewRepo{Name: "r", Location: "/r", ReadOnly: readOnly}); err != nil {
+			t.Fatal(err)
+		}
+		if r, _ := s.Repo(ctx, id); r.ReadOnly != readOnly {
+			t.Errorf("ReadOnly = %v, want %v", r.ReadOnly, readOnly)
+		}
+		if got, _ := s.Job(ctx, id); got == nil || *got != job {
+			t.Errorf("job after setting read-only=%v: %+v, want %+v", readOnly, got, job)
+		}
 	}
 }
 

@@ -233,6 +233,52 @@ func TestLocksParsingAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestRcloneRepositories(t *testing.T) {
+	var args []string
+	runner := &fakeRunner{handle: func(a []string) (string, int) {
+		args = a
+		return `{"total_size": 4242, "total_file_count": 7}`, 0
+	}}
+	c := NewWithRunner(runner, "")
+	ref := backend.Ref{Kind: domain.BackendRclone, Location: "gdrive:Backups/paperless", Password: "pw"}
+
+	size, err := c.RepoSize(context.Background(), ref)
+	if err != nil || size != 4242 {
+		t.Errorf("size = %d, %v", size, err)
+	}
+	if len(args) < 2 || args[0] != "-r" || args[1] != "rclone:gdrive:Backups/paperless" {
+		t.Errorf("restic was started with %v", args)
+	}
+
+	other := ref
+	other.Kind = "carrier-pigeon"
+	if _, err := c.RepoSize(context.Background(), other); !errors.Is(err, backend.ErrUnsupported) {
+		t.Errorf("unknown kind: err = %v", err)
+	}
+}
+
+func TestReadOnlyRepositoryIsNeverChanged(t *testing.T) {
+	calls := 0
+	runner := &fakeRunner{handle: func([]string) (string, int) { calls++; return "[]", 0 }}
+	c := NewWithRunner(runner, "")
+	ref := fakeRef
+	ref.ReadOnly = true
+
+	if _, err := c.Forget(context.Background(), ref, domain.KeepPolicy{Last: 1}); !errors.Is(err, backend.ErrReadOnly) {
+		t.Errorf("Forget: err = %v", err)
+	}
+	if _, err := c.Prune(context.Background(), ref, io.Discard); !errors.Is(err, backend.ErrReadOnly) {
+		t.Errorf("Prune: err = %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("restic was started %d times for a read-only repository", calls)
+	}
+	// Reading stays possible.
+	if _, err := c.Snapshots(context.Background(), ref); err != nil || calls != 1 {
+		t.Errorf("Snapshots on a read-only repository: err = %v, calls = %d", err, calls)
+	}
+}
+
 func TestContextCancellationIsNotAResticError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -227,6 +227,8 @@ legend { font-weight: 700; font-size: var(--t-md); letter-spacing: -0.01em; padd
 .toggle small { display: block; color: var(--slate); font-size: var(--t-xs); }
 .toggle.inline { margin: 0; align-items: center; }
 label.toggle { width: fit-content; max-width: 100%; }
+/* Inside a .field the generic ".field > label" rule (block, bold) would win over .toggle. */
+.field > label.toggle { display: flex; font-weight: 400; margin-bottom: 0; }
 
 input[type="checkbox"].box {
   appearance: none; width: 18px; height: 18px; margin: 0;

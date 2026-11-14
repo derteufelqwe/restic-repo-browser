@@ -20,6 +20,8 @@ type Ref struct {
 	Kind     domain.BackendKind
 	Location string
 	Password string
+	// ReadOnly makes a backend refuse every call that changes the repository.
+	ReadOnly bool
 }
 
 // PasswordSource hands out the secret of a stored repository.
@@ -33,7 +35,7 @@ func Resolve(ctx context.Context, passwords PasswordSource, repo domain.Repo) (R
 	if err != nil {
 		return Ref{}, err
 	}
-	return Ref{Kind: repo.Backend, Location: repo.Location, Password: pw}, nil
+	return Ref{Kind: repo.Backend, Location: repo.Location, Password: pw, ReadOnly: repo.ReadOnly}, nil
 }
 
 // Node is a file, directory or other entry of a snapshot.
@@ -92,7 +94,8 @@ type Backend interface {
 	// Dump writes a file's bytes, or a folder as a tar archive when asTar is set.
 	Dump(ctx context.Context, ref Ref, snapshotID, p string, asTar bool, w io.Writer) error
 
-	// Forget removes the snapshots that the keep rules do not match.
+	// Forget removes the snapshots that the keep rules do not match. Like Prune
+	// it fails with ErrReadOnly, without touching the repository, when ref.ReadOnly is set.
 	Forget(ctx context.Context, ref Ref, keep domain.KeepPolicy) (ForgetResult, error)
 	// Prune removes unreferenced data; progress text goes to log.
 	Prune(ctx context.Context, ref Ref, log io.Writer) (PruneResult, error)

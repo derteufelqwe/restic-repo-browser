@@ -24,6 +24,7 @@ import (
 var (
 	ErrNoJob      = errors.New("this repository has no cleanup job")
 	ErrNotStarted = errors.New("the job runner is not running")
+	ErrReadOnly   = errors.New("this repository is read-only, so its cleanup never runs")
 )
 
 // Store is the part of the persistence layer the runner needs.
@@ -48,7 +49,9 @@ type Syncer interface {
 	Refresh(ctx context.Context, id int64) error
 }
 
-// Runner executes cleanup jobs.
+// Runner executes cleanup jobs. A repository marked read-only is never touched:
+// its job stays saved, but every way of starting it is refused or skipped, and
+// the backend refuses the changing calls as a last line of defence.
 type Runner struct {
 	store   Store
 	backend Backend
@@ -97,6 +100,13 @@ func (r *Runner) Running(repoID int64) bool {
 // RunNow starts the repository's cleanup job in the background. It fails with a
 // *tasks.BusyError when another task (a sync or any cleanup) is running.
 func (r *Runner) RunNow(ctx context.Context, repoID int64) error {
+	repo, err := r.store.Repo(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	if repo.ReadOnly {
+		return ErrReadOnly
+	}
 	job, err := r.store.Job(ctx, repoID)
 	if err != nil {
 		return err
@@ -110,11 +120,7 @@ func (r *Runner) RunNow(ctx context.Context, repoID int64) error {
 	if base == nil {
 		return ErrNotStarted
 	}
-	title, err := r.title(ctx, repoID)
-	if err != nil {
-		return err
-	}
-	task, err := r.tasks.TryStart(tasks.KindCleanup, title, repoID)
+	task, err := r.tasks.TryStart(tasks.KindCleanup, "Cleaning up "+repo.Name, repoID)
 	if err != nil {
 		return err
 	}
@@ -124,14 +130,6 @@ func (r *Runner) RunNow(ctx context.Context, repoID int64) error {
 		r.execute(base, *job, task)
 	}()
 	return nil
-}
-
-func (r *Runner) title(ctx context.Context, repoID int64) (string, error) {
-	repo, err := r.store.Repo(ctx, repoID)
-	if err != nil {
-		return "", err
-	}
-	return "Cleaning up " + repo.Name, nil
 }
 
 // schedule starts jobs whose cron time passed since the previous tick. A run
@@ -175,12 +173,16 @@ func (r *Runner) schedule(ctx context.Context) {
 }
 
 func (r *Runner) runScheduled(ctx context.Context, job domain.Job) {
-	title, err := r.title(ctx, job.RepoID)
+	repo, err := r.store.Repo(ctx, job.RepoID)
 	if err != nil {
 		r.log.Warn("scheduled cleanup skipped", "repo", job.RepoID, "err", err)
 		return
 	}
-	task, err := r.tasks.Start(ctx, tasks.KindCleanup, title, job.RepoID)
+	if repo.ReadOnly {
+		r.log.Info("scheduled cleanup skipped: the repository is read-only", "repo", repo.Name)
+		return
+	}
+	task, err := r.tasks.Start(ctx, tasks.KindCleanup, "Cleaning up "+repo.Name, job.RepoID)
 	if err != nil {
 		return // shutting down
 	}
@@ -189,6 +191,13 @@ func (r *Runner) runScheduled(ctx context.Context, job domain.Job) {
 
 // execute performs one run inside task and records it.
 func (r *Runner) execute(ctx context.Context, job domain.Job, task *tasks.Task) {
+	// The job may have waited for the task slot. Look at the repository again, so
+	// that making it read-only in the meantime stops the run.
+	if repo, err := r.store.Repo(ctx, job.RepoID); err == nil && repo.ReadOnly {
+		r.log.Info("cleanup skipped: the repository is read-only", "repo", repo.Name)
+		task.Finish(nil)
+		return
+	}
 	started := r.now()
 	ctx = tasks.WithTask(ctx, task)
 	runID, err := r.store.StartRun(ctx, job.RepoID, started)

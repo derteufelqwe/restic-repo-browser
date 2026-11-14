@@ -11,9 +11,17 @@ import (
 // BackendKind says where a repository lives and therefore how it is reached.
 type BackendKind string
 
-// BackendLocal is a repository in a folder on the machine running the server.
-// Further kinds (a REST server, rclone) would be added here.
-const BackendLocal BackendKind = "local"
+// The ways a repository can be reached. Further kinds (a REST server) are added here.
+const (
+	// BackendLocal is a repository in a folder on the machine running the server.
+	BackendLocal BackendKind = "local"
+	// BackendRclone is a repository behind an rclone remote ("remote:folder").
+	// rclone itself is set up on the host, not by this application.
+	BackendRclone BackendKind = "rclone"
+)
+
+// Valid reports whether k is a kind this application knows.
+func (k BackendKind) Valid() bool { return k == BackendLocal || k == BackendRclone }
 
 // Repo is a restic repository. The password is never part of this type; it is
 // only handed out by the store when the backend needs it.
@@ -21,7 +29,10 @@ type Repo struct {
 	ID      int64
 	Name    string
 	Backend BackendKind
-	// Location is where the repository is: a folder path for BackendLocal.
+	// ReadOnly forbids everything that changes the repository: no cleanup job
+	// can be set up or run. A job saved earlier is kept but never executed.
+	ReadOnly bool
+	// Location is where the repository is: a folder path for BackendLocal, "remote:folder" for BackendRclone.
 	Location  string
 	CreatedAt time.Time
 

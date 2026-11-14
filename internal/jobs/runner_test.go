@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -17,18 +18,23 @@ import (
 )
 
 type fakeStore struct {
-	mu   sync.Mutex
-	job  *domain.Job
-	runs map[int64]*domain.Run
-	next int64
+	mu       sync.Mutex
+	job      *domain.Job
+	runs     map[int64]*domain.Run
+	next     int64
+	readOnly bool
 }
+
+func (f *fakeStore) setReadOnly(v bool) { f.mu.Lock(); f.readOnly = v; f.mu.Unlock() }
 
 func newFakeStore(job *domain.Job) *fakeStore {
 	return &fakeStore{job: job, runs: map[int64]*domain.Run{}}
 }
 
 func (f *fakeStore) Repo(context.Context, int64) (domain.Repo, error) {
-	return domain.Repo{ID: 1, Name: "r", Backend: domain.BackendLocal, Location: "/r"}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return domain.Repo{ID: 1, Name: "r", Backend: domain.BackendLocal, Location: "/r", ReadOnly: f.readOnly}, nil
 }
 func (f *fakeStore) RepoPassword(context.Context, int64) (string, error) { return "pw", nil }
 func (f *fakeStore) Job(context.Context, int64) (*domain.Job, error)     { return f.job, nil }
@@ -267,6 +273,67 @@ func TestSchedulerStartsDueJobsAndWaitsForTheSlot(t *testing.T) {
 	if n := len(st.finished()); n != 1 {
 		t.Errorf("job ran %d times, want 1", n)
 	}
+}
+
+// A job saved before its repository became read-only stays saved but must never
+// run: not on demand, not on schedule, not when it was already waiting in line.
+func TestReadOnlyRepositoryNeverRunsItsJob(t *testing.T) {
+	now := time.Date(2026, 11, 11, 3, 29, 50, 0, time.Local) // the job runs daily at 03:30
+	var mu sync.Mutex
+	setClock := func(v time.Time) { mu.Lock(); now = v; mu.Unlock() }
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	calls := func(be *fakeBackend) int { be.mu.Lock(); defer be.mu.Unlock(); return len(be.calls) }
+
+	st, be := newFakeStore(job()), &fakeBackend{}
+	st.setReadOnly(true)
+	r, _, tm := newRunner(st, be)
+	r.now, r.tick = clock, 10*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.Start(ctx)
+
+	if err := r.RunNow(ctx, 1); !errors.Is(err, ErrReadOnly) {
+		t.Errorf("RunNow on a read-only repository: %v", err)
+	}
+
+	// The job is due at 03:30 and the schedule fires, but nothing may run.
+	setClock(time.Date(2026, 11, 11, 3, 30, 5, 0, time.Local))
+	time.Sleep(150 * time.Millisecond)
+	if calls(be) != 0 || len(st.runs) != 0 {
+		t.Fatalf("a read-only repository was touched: calls=%d runs=%d", calls(be), len(st.runs))
+	}
+
+	// A job that is already waiting for the task slot is dropped too, when the
+	// repository becomes read-only while it waits.
+	st.setReadOnly(false)
+	busy, _ := tm.TryStart(tasks.KindSync, "Syncing all repositories", 0)
+	setClock(time.Date(2026, 11, 12, 3, 29, 50, 0, time.Local))
+	time.Sleep(60 * time.Millisecond)
+	setClock(time.Date(2026, 11, 12, 3, 30, 5, 0, time.Local))
+	time.Sleep(100 * time.Millisecond) // the scheduled job is now queued behind the sync
+	st.setReadOnly(true)
+	busy.Finish(nil)
+	time.Sleep(150 * time.Millisecond)
+	if calls(be) != 0 || len(st.runs) != 0 {
+		t.Fatalf("a queued job ran after the repository became read-only: calls=%d runs=%d", calls(be), len(st.runs))
+	}
+
+	// The saved job is untouched by all of this.
+	if !reflect.DeepEqual(st.job, job()) {
+		t.Errorf("the saved job changed: %+v", st.job)
+	}
+
+	// Control: once the repository is writable again, the same job runs.
+	st.setReadOnly(false)
+	if err := r.RunNow(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(st.finished()) == 1 })
+	if calls(be) == 0 {
+		t.Error("the job did not run after the read-only flag was cleared")
+	}
+	cancel()
+	r.Wait()
 }
 
 func waitFor(t *testing.T, cond func() bool) {

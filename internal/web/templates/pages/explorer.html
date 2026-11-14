@@ -14,7 +14,7 @@
 </header>
 <section class="panel">
   <div class="browser">
-    <nav class="tree" id="tree" aria-label="Folders"><ul role="tree">{{template "tree_node" .Tree}}</ul></nav>
+    {{template "tree_nav" .Tree}}
     {{template "listing_pane" .Pane}}
   </div>
 </section>

@@ -10,7 +10,7 @@
       {{$cur := .Sort}}{{range .Sorts}}<option value="{{.Key}}" {{if eq .Key $cur}}selected{{end}}>{{.Label}}</option>{{end}}
     </select>
     <button type="button" class="btn" data-needs-idle hx-post="/sync" hx-swap="none" title="Read every repository again and refresh the saved data">Sync all</button>
-    <a class="btn" href="/settings">Add repository</a>
+    <a class="btn" href="/settings?add=1">Add repository</a>
   </div>
 </header>
 {{template "repo_cards" .}}

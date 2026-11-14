@@ -37,6 +37,9 @@ type cleanupView struct {
 
 // TabLabel is the short state shown on the Cleanup tab.
 func (c cleanupView) TabLabel() string {
+	if c.S.Repo.ReadOnly {
+		return "Read-only"
+	}
 	if c.Job == nil {
 		return "Not set up"
 	}
@@ -57,7 +60,7 @@ func (s *Server) buildCleanupView(ctx context.Context, sum domain.Summary) (clea
 	}
 	v.Runs = runsData{RepoID: sum.Repo.ID, Runs: runs, Running: s.Jobs.Running(sum.Repo.ID)}
 	if sum.Job != nil {
-		jv := newJobView(*sum.Job, s.Now())
+		jv := newJobView(*sum.Job, sum.Repo.ReadOnly, s.Now())
 		v.Job = &jv
 		v.Items = s.cleanupItems(sum, jv)
 		v.Runs.Status = s.statusLine(jv, runs)
@@ -67,6 +70,9 @@ func (s *Server) buildCleanupView(ctx context.Context, sum domain.Summary) (clea
 
 func (s *Server) statusLine(jv jobView, runs []domain.Run) string {
 	now := s.Now()
+	if jv.ReadOnly {
+		return "Read-only: this job is kept but never runs."
+	}
 	var parts []string
 	switch {
 	case len(runs) == 0:
@@ -98,7 +104,10 @@ func (s *Server) cleanupItems(sum domain.Summary, jv jobView) []fact {
 		after = "Prune the repository"
 	}
 	active := "Paused"
-	if jv.Enabled {
+	switch {
+	case jv.ReadOnly:
+		active = "Kept, never run (read-only)"
+	case jv.Enabled:
 		active = "Active"
 	}
 	return []fact{
@@ -108,6 +117,17 @@ func (s *Server) cleanupItems(sum domain.Summary, jv jobView) []fact {
 		{"After forgetting", after, ""},
 		{"Job", active, ""},
 	}
+}
+
+// refuseIfReadOnly answers a request that would set up or start a cleanup on a
+// read-only repository. It reports whether it did.
+func (s *Server) refuseIfReadOnly(w http.ResponseWriter, sum domain.Summary) bool {
+	if !sum.Repo.ReadOnly {
+		return false
+	}
+	sendToast(w, toast{Title: "This repository is read-only", Sub: "Cleanups cannot be set up or run.", Fail: true})
+	w.WriteHeader(http.StatusForbidden)
+	return true
 }
 
 func (s *Server) handleCleanupView(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +178,9 @@ func (s *Server) handleCleanupEdit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.refuseIfReadOnly(w, sum) {
+		return
+	}
 	job, isNew, status := defaultJob(sum.Repo.ID), true, "Not set up."
 	if sum.Job != nil {
 		job, isNew = *sum.Job, false
@@ -166,7 +189,7 @@ func (s *Server) handleCleanupEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		status = s.statusLine(newJobView(job, s.Now()), runs)
+		status = s.statusLine(newJobView(job, sum.Repo.ReadOnly, s.Now()), runs)
 	}
 	f := newCleanupForm(job, isNew, status, sum.Count())
 	f.Preview = s.buildPreview(sum, job, nil)
@@ -200,6 +223,9 @@ func jobFromForm(r *http.Request, repoID int64) (domain.Job, map[string]string) 
 func (s *Server) handleCleanupSave(w http.ResponseWriter, r *http.Request) {
 	sum, ok := s.repoFromPath(w, r)
 	if !ok {
+		return
+	}
+	if s.refuseIfReadOnly(w, sum) {
 		return
 	}
 	job, errs := jobFromForm(r, sum.Repo.ID)
@@ -304,6 +330,9 @@ func (s *Server) handleCleanupPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.refuseIfReadOnly(w, sum) {
+		return
+	}
 	job, errs := jobFromForm(r, sum.Repo.ID)
 	delete(errs, "keep") // shown by the preview itself
 	p := s.buildPreview(sum, job, errs)
@@ -328,11 +357,16 @@ func (s *Server) handleCleanupRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.refuseIfReadOnly(w, sum) {
+		return
+	}
 	switch err := s.Jobs.RunNow(r.Context(), sum.Repo.ID); {
 	case err == nil:
 		sendTaskStarted(w, toast{Title: "Cleanup started", Sub: sum.Repo.Name + " is being cleaned up."})
 	case s.refuseIfBusy(w, err):
 		return
+	case errors.Is(err, jobs.ErrReadOnly): // switched to read-only while this request was on its way
+		sendToast(w, toast{Title: "This repository is read-only", Sub: "Cleanups cannot be run.", Fail: true})
 	case errors.Is(err, jobs.ErrNoJob):
 		sendToast(w, toast{Title: "Set up a cleanup job first", Fail: true})
 	default:

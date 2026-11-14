@@ -92,14 +92,6 @@ func snapshotCount(n int) string {
 	return fmt.Sprintf(", %s snapshots", format.Int(int64(n)))
 }
 
-// defaultRange picks 30 days when it holds enough bars to be useful, else 6 months.
-func defaultRange(snaps []domain.Snapshot, now time.Time) domain.Range {
-	if len(domain.BuildHistory(snaps, domain.Range30Days, now).Buckets) >= 5 {
-		return domain.Range30Days
-	}
-	return domain.Range6Months
-}
-
 type retentionSeries struct {
 	Labels []string `json:"labels"`
 	Titles []string `json:"titles"`

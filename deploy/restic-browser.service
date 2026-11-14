@@ -4,8 +4,6 @@ After=network.target
 
 [Service]
 Type=simple
-User=restic-browser
-Group=restic-browser
 # Keeps the database, the encryption key and restic's cache in /var/lib/restic-browser.
 StateDirectory=restic-browser
 StateDirectoryMode=0700

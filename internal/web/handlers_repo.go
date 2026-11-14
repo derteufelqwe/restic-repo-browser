@@ -55,7 +55,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		S:         sum,
 		Facts:     s.facts(sum, refreshTime),
 		Notices:   s.notices(sum),
-		Chart:     buildChartPanel(sum.Repo.ID, sum.Snapshots, defaultRange(sum.Snapshots, s.Now()), s.Now()),
+		Chart:     buildChartPanel(sum.Repo.ID, sum.Snapshots, domain.Range30Days, s.Now()),
 		Snapshots: s.buildSnapshotList(sum, parseSnapshotQuery(r)),
 		Cleanup:   cleanup,
 		TabLabel:  cleanup.TabLabel(),
@@ -83,9 +83,11 @@ func (s *Server) facts(sum domain.Summary, refreshTime string) []fact {
 	}
 	f = append(f, syncFact(sum.Repo, refreshTime, now))
 	if sum.Job != nil {
-		jv := newJobView(*sum.Job, now)
+		jv := newJobView(*sum.Job, sum.Repo.ReadOnly, now)
 		next := "Paused"
-		if !jv.Next.IsZero() {
+		if jv.ReadOnly {
+			next = "Never (read-only)"
+		} else if !jv.Next.IsZero() {
 			next = format.Run(jv.Next)
 		}
 		f = append(f, fact{"Next cleanup", next, ""})

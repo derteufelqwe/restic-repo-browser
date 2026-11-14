@@ -147,8 +147,9 @@ func (s Summary) AddedSince(t time.Time) int64 {
 // Added30Days sums the data added in the last 30 days.
 func (s Summary) Added30Days() int64 { return s.AddedSince(s.now.AddDate(0, 0, -30)) }
 
-// HasActiveJob reports whether the repo has a cleanup job that is not paused.
-func (s Summary) HasActiveJob() bool { return s.Job != nil && s.Job.Enabled }
+// HasActiveJob reports whether the repo has a cleanup job that will run: one
+// that is not paused and whose repository is not read-only.
+func (s Summary) HasActiveJob() bool { return s.Job != nil && s.Job.Enabled && !s.Repo.ReadOnly }
 
 // Late and overdue thresholds, as multiples of the typical snapshot interval.
 const (
