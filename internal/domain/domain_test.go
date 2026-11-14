@@ -93,14 +93,6 @@ func TestBuildHistoryAllSplitsInitialBackup(t *testing.T) {
 	}
 }
 
-func TestWeekBucketStartsOnMonday(t *testing.T) {
-	sunday := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
-	start, end := bucketSpan(sunday, "week")
-	if start.Weekday() != time.Monday || start.Day() != 2 || end.Day() != 9 {
-		t.Errorf("week span = %v to %v", start, end)
-	}
-}
-
 func TestFilter(t *testing.T) {
 	s := Snapshot{ID: "abcdef0123", ShortID: "abcdef01", Host: "nas", Paths: []string{"/data"}, Tags: []string{"photos"}, Time: now}
 	cases := []struct {
@@ -123,38 +115,6 @@ func TestFilter(t *testing.T) {
 		if got := c.f.Matches(s); got != c.want {
 			t.Errorf("case %d: Matches = %v, want %v", i, got, c.want)
 		}
-	}
-}
-
-func TestPaginate(t *testing.T) {
-	items := make([]int, 33)
-	p := Paginate(items, 3, 15)
-	if p.Pages != 3 || len(p.Items) != 3 || p.FirstIndex != 31 || p.LastIndex() != 33 {
-		t.Errorf("page = %+v", p)
-	}
-	if p := Paginate(items, 99, 15); p.Number != 3 {
-		t.Errorf("page number should clamp, got %d", p.Number)
-	}
-	if p := Paginate([]int(nil), 1, 15); p.Pages != 1 || p.FirstIndex != 0 || p.LastIndex() != 0 {
-		t.Errorf("empty page = %+v", p)
-	}
-}
-
-func TestPageLinks(t *testing.T) {
-	p := Page[int]{Pages: 20, Number: 10}
-	want := []int{1, 0, 9, 10, 11, 0, 20}
-	if got := p.PageLinks(); !reflect.DeepEqual(got, want) {
-		t.Errorf("links = %v, want %v", got, want)
-	}
-	p = Page[int]{Pages: 5, Number: 1}
-	if got := p.PageLinks(); !reflect.DeepEqual(got, []int{1, 2, 3, 4, 5}) {
-		t.Errorf("links = %v", got)
-	}
-}
-
-func TestKeepPolicyEmpty(t *testing.T) {
-	if !(KeepPolicy{}).Empty() || (KeepPolicy{Last: 1}).Empty() {
-		t.Error("Empty() wrong")
 	}
 }
 

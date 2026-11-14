@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"restic-repo-browser/internal/archive"
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 )
 
-// The explorer is the only part of the UI that asks restic while the request
-// is handled. It shows exactly what `restic ls` reports, starting at the root of
-// the snapshot's file tree: one `ls` per folder that is opened, nothing else.
+// The explorer is the only part of the UI that asks the backend while the request
+// is handled. It shows exactly what the backend lists, starting at the root of
+// the snapshot's file tree: one listing per folder that is opened, nothing else.
 
 const (
 	maxListed = 2000 // entries shown per folder
@@ -44,7 +45,7 @@ type listingPane struct {
 }
 
 // treeNode is a folder in the left-hand tree. Folders are loaded on demand, one
-// `restic ls` per expansion.
+// listing per expansion.
 type treeNode struct {
 	Base     string
 	Name     string
@@ -96,52 +97,60 @@ func findSnapshot(sum domain.Summary, key string) (domain.Snapshot, bool) {
 	return domain.Snapshot{}, false
 }
 
-// snapshotFromPath loads the repository and snapshot named in the URL.
-func (s *Server) snapshotFromPath(w http.ResponseWriter, r *http.Request) (domain.Summary, domain.Snapshot, bool) {
+// snapshotRequest is what a handler that reaches into a snapshot needs.
+type snapshotRequest struct {
+	Sum  domain.Summary
+	Snap domain.Snapshot
+	Ref  backend.Ref // credentials to open the repository
+	Base string      // URL prefix of the snapshot
+}
+
+// snapshotFromPath loads the repository and snapshot named in the URL and
+// answers the error itself when that fails.
+func (s *Server) snapshotFromPath(w http.ResponseWriter, r *http.Request) (snapshotRequest, bool) {
 	sum, ok := s.repoFromPath(w, r)
 	if !ok {
-		return sum, domain.Snapshot{}, false
+		return snapshotRequest{}, false
 	}
 	snap, found := findSnapshot(sum, r.PathValue("snap"))
 	if !found {
 		s.notFound(w, r)
-		return sum, snap, false
+		return snapshotRequest{}, false
 	}
-	return sum, snap, true
+	ref, err := backend.Resolve(r.Context(), s.Store, sum.Repo)
+	if err != nil {
+		s.serverError(w, r, err)
+		return snapshotRequest{}, false
+	}
+	return snapshotRequest{Sum: sum, Snap: snap, Ref: ref, Base: snapshotBase(sum.Repo.ID, snap.ID)}, true
 }
 
 func (s *Server) handleExplorer(w http.ResponseWriter, r *http.Request) {
-	sum, snap, ok := s.snapshotFromPath(w, r)
+	req, ok := s.snapshotFromPath(w, r)
 	if !ok {
 		return
 	}
-	base := snapshotBase(sum.Repo.ID, snap.ID)
-	data := explorerData{S: sum, Snap: snap, Base: base,
-		Zip: downloadURL(base, "/", formatZip), TarGz: downloadURL(base, "/", formatTarGz)}
-	title := "Snapshot " + snap.ShortID
-	active := fmt.Sprintf("repo:%d", sum.Repo.ID)
-	if sum.Repo.Unreachable() {
-		data.Notice = sum.Repo.RefreshError
+	data := explorerData{S: req.Sum, Snap: req.Snap, Base: req.Base,
+		Zip: downloadURL(req.Base, "/", archive.Zip), TarGz: downloadURL(req.Base, "/", archive.TarGz)}
+	title := "Snapshot " + req.Snap.ShortID
+	active := fmt.Sprintf("repo:%d", req.Sum.Repo.ID)
+	if req.Sum.Repo.Unreachable() {
+		data.Notice = req.Sum.Repo.RefreshError
 		s.renderPage(w, r, "explorer", title, active, data)
 		return
 	}
-	rr, err := s.resticRepo(r.Context(), sum.Repo)
-	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
 
-	current := restic.CleanPath(r.URL.Query().Get("path"))
-	nodes, err := s.Explorer.List(r.Context(), rr, snap.ID, current)
-	data.Pane = newPane(base, current, nodes, err)
-	data.Tree = buildTree(base, current, nodes)
+	current := backend.CleanPath(r.URL.Query().Get("path"))
+	nodes, err := s.Explorer.List(r.Context(), req.Ref, req.Snap.ID, current)
+	data.Pane = newPane(req.Base, current, nodes, err)
+	data.Tree = buildTree(req.Base, current, nodes)
 	s.renderPage(w, r, "explorer", title, active, data)
 }
 
-func newPane(base, dir string, nodes []restic.Node, err error) listingPane {
+func newPane(base, dir string, nodes []backend.Node, err error) listingPane {
 	p := listingPane{Base: base, Path: dir, Crumbs: crumbs(dir)}
 	if err != nil {
-		p.Err = restic.UserMessage(err)
+		p.Err = backend.UserMessage(err)
 		return p
 	}
 	for _, n := range nodes {
@@ -162,7 +171,7 @@ func newPane(base, dir string, nodes []restic.Node, err error) listingPane {
 }
 
 // childFolders turns the folders of a listing into tree nodes, sorted by name.
-func childFolders(base string, listing []restic.Node, current string) []treeNode {
+func childFolders(base string, listing []backend.Node, current string) []treeNode {
 	var out []treeNode
 	for _, n := range listing {
 		if n.IsDir() {
@@ -175,7 +184,7 @@ func childFolders(base string, listing []restic.Node, current string) []treeNode
 
 // buildTree creates the initial tree: the snapshot root, expanded with its folders
 // when that is the folder being shown.
-func buildTree(base, current string, listing []restic.Node) treeNode {
+func buildTree(base, current string, listing []backend.Node) treeNode {
 	top := treeNode{Base: base, Name: rootLabel, Path: "/", Current: current == "/"}
 	if current == "/" {
 		top.Open, top.Children = true, childFolders(base, listing, current)
@@ -184,73 +193,57 @@ func buildTree(base, current string, listing []restic.Node) treeNode {
 }
 
 func (s *Server) handleListing(w http.ResponseWriter, r *http.Request) {
-	sum, snap, ok := s.snapshotFromPath(w, r)
+	req, ok := s.snapshotFromPath(w, r)
 	if !ok {
 		return
 	}
-	rr, err := s.resticRepo(r.Context(), sum.Repo)
-	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-	dir := restic.CleanPath(r.URL.Query().Get("path"))
-	nodes, err := s.Explorer.List(r.Context(), rr, snap.ID, dir)
-	s.renderFragment(w, r, "listing_pane", newPane(snapshotBase(sum.Repo.ID, snap.ID), dir, nodes, err))
+	dir := backend.CleanPath(r.URL.Query().Get("path"))
+	nodes, err := s.Explorer.List(r.Context(), req.Ref, req.Snap.ID, dir)
+	s.renderFragment(w, r, "listing_pane", newPane(req.Base, dir, nodes, err))
 }
 
 // handleTree expands one tree folder.
 func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
-	sum, snap, ok := s.snapshotFromPath(w, r)
+	req, ok := s.snapshotFromPath(w, r)
 	if !ok {
 		return
 	}
-	rr, err := s.resticRepo(r.Context(), sum.Repo)
+	dir := backend.CleanPath(r.URL.Query().Get("path"))
+	nodes, err := s.Explorer.List(r.Context(), req.Ref, req.Snap.ID, dir)
 	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-	dir := restic.CleanPath(r.URL.Query().Get("path"))
-	nodes, err := s.Explorer.List(r.Context(), rr, snap.ID, dir)
-	if err != nil {
-		sendToast(w, toast{Title: "Cannot open the folder", Sub: restic.UserMessage(err), Fail: true})
+		sendToast(w, toast{Title: "Cannot open the folder", Sub: backend.UserMessage(err), Fail: true})
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	base := snapshotBase(sum.Repo.ID, snap.ID)
 	name := path.Base(dir)
 	if dir == "/" {
 		name = rootLabel
 	}
-	n := treeNode{Base: base, Name: name, Path: dir, Open: true, Children: childFolders(base, nodes, "")}
+	n := treeNode{Base: req.Base, Name: name, Path: dir, Open: true, Children: childFolders(req.Base, nodes, "")}
 	s.renderFragment(w, r, "tree_node", n)
 }
 
 type detailsData struct {
 	Base    string
-	Node    restic.Node
+	Node    backend.Node
 	Preview bool
 	Owner   string
 	Snap    domain.Snapshot
 }
 
 func (s *Server) handleDetails(w http.ResponseWriter, r *http.Request) {
-	sum, snap, ok := s.snapshotFromPath(w, r)
+	req, ok := s.snapshotFromPath(w, r)
 	if !ok {
 		return
 	}
-	rr, err := s.resticRepo(r.Context(), sum.Repo)
+	node, err := s.Explorer.Node(r.Context(), req.Ref, req.Snap.ID, r.URL.Query().Get("path"))
 	if err != nil {
-		s.serverError(w, r, err)
-		return
-	}
-	node, err := s.Explorer.Node(r.Context(), rr, snap.ID, restic.CleanPath(r.URL.Query().Get("path")))
-	if err != nil {
-		sendToast(w, toast{Title: "Cannot read the item", Sub: restic.UserMessage(err), Fail: true})
+		sendToast(w, toast{Title: "Cannot read the item", Sub: backend.UserMessage(err), Fail: true})
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	s.renderFragment(w, r, "details", detailsData{
-		Base: snapshotBase(sum.Repo.ID, snap.ID), Node: node, Snap: snap,
+		Base: req.Base, Node: node, Snap: req.Snap,
 		Preview: previewType(node.Name) != "" && node.Size != nil && *node.Size <= maxPreview,
 		Owner:   fmt.Sprintf("%d:%d", node.UID, node.GID),
 	})

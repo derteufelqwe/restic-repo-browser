@@ -38,10 +38,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	token, expires, err := s.Auth.Login(r.Context(), r.PostFormValue("password"), clientIP(r))
 	switch {
 	case err == nil:
-		http.SetCookie(w, &http.Cookie{
-			Name: sessionCookie, Value: token, Path: "/", Expires: expires,
-			HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.SecureCookies,
-		})
+		http.SetCookie(w, s.sessionCookie(token, expires))
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	case errors.Is(err, auth.ErrInvalidPassword):
 		s.renderLogin(w, r, loginData{Configured: true, Error: "Wrong password. Check it and try again."}, http.StatusUnauthorized)
@@ -54,12 +51,22 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// sessionCookie builds the session cookie; logging out clears it with the same attributes.
+func (s *Server) sessionCookie(value string, expires time.Time) *http.Cookie {
+	return &http.Cookie{
+		Name: sessionCookie, Value: value, Path: "/", Expires: expires,
+		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.SecureCookies,
+	}
+}
+
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		if err := s.Auth.Logout(r.Context(), c.Value); err != nil {
 			s.Log.Warn("logout", "err", err)
 		}
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", Expires: time.Unix(0, 0), MaxAge: -1, HttpOnly: true})
+	cleared := s.sessionCookie("", time.Unix(0, 0))
+	cleared.MaxAge = -1
+	http.SetCookie(w, cleared)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

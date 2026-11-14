@@ -1,17 +1,14 @@
 package restic
 
 import (
+	"strconv"
 	"time"
+
+	"restic-repo-browser/internal/domain"
 )
 
-// Repo identifies a repository and how to open it.
-type Repo struct {
-	Path     string
-	Password string
-}
-
-// Snapshot is a snapshot as reported by `restic snapshots --json`.
-type Snapshot struct {
+// snapshotJSON is a snapshot as reported by `restic snapshots --json`.
+type snapshotJSON struct {
 	ID       string    `json:"id"`
 	ShortID  string    `json:"short_id"`
 	Time     time.Time `json:"time"`
@@ -19,24 +16,37 @@ type Snapshot struct {
 	Username string    `json:"username"`
 	Paths    []string  `json:"paths"`
 	Tags     []string  `json:"tags"`
-	Summary  *Summary  `json:"summary"`
+	// Summary is the backup summary restic (0.17 and later) stores in each snapshot.
+	Summary *struct {
+		DataAdded           int64 `json:"data_added"`
+		TotalFilesProcessed int64 `json:"total_files_processed"`
+		TotalBytesProcessed int64 `json:"total_bytes_processed"`
+	} `json:"summary"`
 }
 
-// Summary is the backup summary restic (0.17 and later) stores in each snapshot.
-type Summary struct {
-	DataAdded           int64 `json:"data_added"`
-	TotalFilesProcessed int64 `json:"total_files_processed"`
-	TotalBytesProcessed int64 `json:"total_bytes_processed"`
+func (s snapshotJSON) toDomain() domain.Snapshot {
+	d := domain.Snapshot{
+		ID: s.ID, ShortID: s.ShortID, Time: s.Time, Host: s.Hostname, Username: s.Username,
+		Paths: s.Paths, Tags: s.Tags,
+	}
+	if s.Summary != nil {
+		size, added, files := s.Summary.TotalBytesProcessed, s.Summary.DataAdded, s.Summary.TotalFilesProcessed
+		d.Size, d.Added, d.Files = &size, &added, &files
+	}
+	return d
 }
 
-// Stats is the output of `restic stats --mode restore-size`.
-type Stats struct {
-	TotalSize      int64 `json:"total_size"`
-	TotalFileCount int64 `json:"total_file_count"`
+func toSnapshots(in []snapshotJSON) []domain.Snapshot {
+	out := make([]domain.Snapshot, len(in))
+	for i, s := range in {
+		out[i] = s.toDomain()
+	}
+	return out
 }
 
-// Node is a file, directory or other entry of a snapshot.
-type Node struct {
+// nodeJSON is an entry of `restic ls --json`. Its fields match backend.Node, so
+// the two convert directly.
+type nodeJSON struct {
 	Name        string    `json:"name"`
 	Type        string    `json:"type"`
 	Path        string    `json:"path"`
@@ -47,24 +57,18 @@ type Node struct {
 	GID         uint32    `json:"gid"`
 }
 
-// IsDir reports whether the node is a directory.
-func (n Node) IsDir() bool { return n.Type == "dir" }
-
-// Lock is the content of a lock file in the repository.
-type Lock struct {
-	ID        string    `json:"-"`
-	Time      time.Time `json:"time"`
-	Exclusive bool      `json:"exclusive"`
-	Hostname  string    `json:"hostname"`
-	Username  string    `json:"username"`
-	PID       int       `json:"pid"`
-}
-
-// ForgetGroup is one group of a `restic forget --json` result.
-type ForgetGroup struct {
-	Host   string     `json:"host"`
-	Paths  []string   `json:"paths"`
-	Tags   []string   `json:"tags"`
-	Keep   []Snapshot `json:"keep"`
-	Remove []Snapshot `json:"remove"`
+// keepArgs converts a keep policy into restic command line flags.
+func keepArgs(k domain.KeepPolicy) []string {
+	var a []string
+	add := func(flag string, n int) {
+		if n > 0 {
+			a = append(a, flag, strconv.Itoa(n))
+		}
+	}
+	add("--keep-last", k.Last)
+	add("--keep-daily", k.Daily)
+	add("--keep-weekly", k.Weekly)
+	add("--keep-monthly", k.Monthly)
+	add("--keep-yearly", k.Yearly)
+	return a
 }

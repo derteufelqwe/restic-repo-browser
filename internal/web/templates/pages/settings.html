@@ -13,7 +13,7 @@
     <tbody>
       {{range .Repos}}<tr>
         <td><b>{{.Name}}</b></td>
-        <td class="mono" style="word-break:break-all">{{.Path}}</td>
+        <td class="mono" style="word-break:break-all">{{.Location}}</td>
         <td>{{if .NeverSynced}}<span class="muted">Never</span>{{else}}<span title="{{date .RefreshedAt}}">{{rel .RefreshedAt}}</span><span class="sub{{if .Unreachable}} failed{{end}}">{{if .Unreachable}}Failed: {{.RefreshError}}{{else}}Succeeded{{end}}</span>{{end}}</td>
         <td>{{template "status" .}}</td>
         <td class="actions"><div class="btn-row">

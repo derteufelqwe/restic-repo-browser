@@ -1,6 +1,7 @@
-// Package restic runs the restic command line program and parses its output.
-// Repository passwords are passed through the child's environment, never on
-// the command line.
+// Package restic implements backend.Backend with the restic command line
+// program. It is the only package that knows restic's flags, exit codes and
+// output formats. Repository passwords are passed through the child's
+// environment, never on the command line.
 package restic
 
 import (
@@ -13,9 +14,11 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"strconv"
+	"regexp"
 	"strings"
+	"time"
 
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/domain"
 )
 
@@ -40,6 +43,8 @@ type Client struct {
 	cacheDir string
 }
 
+var _ backend.Backend = (*Client)(nil)
+
 // New creates a Client for the restic executable at bin. cacheDir keeps restic's
 // own cache inside the application's data directory.
 func New(bin, cacheDir string, opts ...Option) *Client {
@@ -55,66 +60,58 @@ func NewWithRunner(r Runner, cacheDir string, opts ...Option) *Client {
 	return c
 }
 
+// target translates a repository reference into restic's -r argument. This is
+// the place to add `rest:<url>` or `rclone:<remote>:<path>` for other kinds.
+func (c *Client) target(ref backend.Ref) (string, error) {
+	switch ref.Kind {
+	case domain.BackendLocal:
+		return ref.Location, nil
+	}
+	return "", backend.Unsupported("repository kind %q is not supported", ref.Kind)
+}
+
 // environment is the child's environment: ours minus any RESTIC_* variables
 // that could redirect the command to another repository, plus the credentials.
-func (c *Client) environment(repo Repo) []string {
+func (c *Client) environment(ref backend.Ref) []string {
 	env := make([]string, 0, len(os.Environ())+3)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(kv), "RESTIC_") {
 			env = append(env, kv)
 		}
 	}
-	env = append(env, "RESTIC_PASSWORD="+repo.Password, "RESTIC_PROGRESS_FPS=0.0001")
+	env = append(env, "RESTIC_PASSWORD="+ref.Password, "RESTIC_PROGRESS_FPS=0.0001")
 	if c.cacheDir != "" {
 		env = append(env, "RESTIC_CACHE_DIR="+c.cacheDir)
 	}
 	return env
 }
 
-// run executes `restic -r <path> args...` and returns its stdout.
-func (c *Client) run(ctx context.Context, repo Repo, args ...string) ([]byte, error) {
+// exec runs `restic -r <repo> args...` with caller-supplied output writers. A
+// non-nil error is the raw exec error; wrapRunError classifies it.
+func (c *Client) exec(ctx context.Context, ref backend.Ref, stdout, stderr io.Writer, args ...string) error {
+	repo, err := c.target(ref)
+	if err != nil {
+		return err
+	}
+	return c.runner.Run(ctx, c.environment(ref), append([]string{"-r", repo}, args...), stdout, stderr)
+}
+
+// capture runs a command and returns its stdout.
+func (c *Client) capture(ctx context.Context, ref backend.Ref, args ...string) ([]byte, error) {
 	var out, errOut bytes.Buffer
-	if err := c.stream(ctx, repo, &out, &errOut, args...); err != nil {
+	if err := c.exec(ctx, ref, &out, &errOut, args...); err != nil {
 		return nil, wrapRunError(ctx, err, out.Bytes(), errOut.Bytes())
 	}
 	return out.Bytes(), nil
 }
 
-// stream executes a command with caller-supplied output writers. A non-nil error
-// is the raw exec error; use wrapRunError to classify it.
-func (c *Client) stream(ctx context.Context, repo Repo, stdout, stderr io.Writer, args ...string) error {
-	full := append([]string{"-r", repo.Path}, args...)
-	return c.runner.Run(ctx, c.environment(repo), full, stdout, stderr)
-}
-
-// streamChecked is stream with errors classified.
-func (c *Client) streamChecked(ctx context.Context, repo Repo, stdout io.Writer, args ...string) error {
+// stream runs a command whose stdout goes straight to w.
+func (c *Client) stream(ctx context.Context, ref backend.Ref, w io.Writer, args ...string) error {
 	var errOut bytes.Buffer
-	if err := c.stream(ctx, repo, stdout, &errOut, args...); err != nil {
+	if err := c.exec(ctx, ref, w, &errOut, args...); err != nil {
 		return wrapRunError(ctx, err, nil, errOut.Bytes())
 	}
 	return nil
-}
-
-func wrapRunError(ctx context.Context, err error, stdout, stderr []byte) error {
-	if ctx.Err() != nil {
-		return ctx.Err() // cancelled or timed out: not a restic failure
-	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		code := exit.ExitCode()
-		return &Error{Kind: classify(code), Code: code, Message: messageFrom(stdout, stderr)}
-	}
-	var pathErr *exec.Error
-	if errors.As(err, &pathErr) || errors.Is(err, os.ErrNotExist) {
-		return &Error{Kind: KindBinaryMissing, Code: -1, Message: err.Error()}
-	}
-	var coded interface{ ExitCode() int } // fakes in tests
-	if errors.As(err, &coded) {
-		code := coded.ExitCode()
-		return &Error{Kind: classify(code), Code: code, Message: messageFrom(stdout, stderr)}
-	}
-	return err
 }
 
 // Version returns the output of `restic version`.
@@ -127,71 +124,88 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 }
 
 // Probe checks that the repository can be opened with the given password.
-func (c *Client) Probe(ctx context.Context, repo Repo) error {
-	_, err := c.run(ctx, repo, "cat", "config", "--no-lock")
+func (c *Client) Probe(ctx context.Context, ref backend.Ref) error {
+	_, err := c.capture(ctx, ref, "cat", "config", "--no-lock")
 	return err
 }
 
 // Snapshots lists all snapshots of the repository.
-func (c *Client) Snapshots(ctx context.Context, repo Repo) ([]Snapshot, error) {
-	out, err := c.run(ctx, repo, "snapshots", "--json", "--no-lock")
+func (c *Client) Snapshots(ctx context.Context, ref backend.Ref) ([]domain.Snapshot, error) {
+	out, err := c.capture(ctx, ref, "snapshots", "--json", "--no-lock")
 	if err != nil {
 		return nil, err
 	}
-	var snaps []Snapshot
-	if err := json.Unmarshal(out, &snaps); err != nil {
+	var raw []snapshotJSON
+	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("restic: parse snapshots: %w", err)
 	}
-	return snaps, nil
+	return toSnapshots(raw), nil
 }
 
-// SnapshotStats computes the restored size of one snapshot.
-func (c *Client) SnapshotStats(ctx context.Context, repo Repo, snapshotID string) (Stats, error) {
-	out, err := c.run(ctx, repo, "stats", "--json", "--mode", "restore-size", "--no-lock", snapshotID)
+// SnapshotSize computes the restored size of one snapshot.
+func (c *Client) SnapshotSize(ctx context.Context, ref backend.Ref, snapshotID string) (backend.SnapshotSize, error) {
+	out, err := c.capture(ctx, ref, "stats", "--json", "--mode", "restore-size", "--no-lock", snapshotID)
 	if err != nil {
-		return Stats{}, err
+		return backend.SnapshotSize{}, err
 	}
-	var st Stats
+	var st struct {
+		TotalSize      int64 `json:"total_size"`
+		TotalFileCount int64 `json:"total_file_count"`
+	}
 	if err := json.Unmarshal(out, &st); err != nil {
-		return Stats{}, fmt.Errorf("restic: parse stats: %w", err)
+		return backend.SnapshotSize{}, fmt.Errorf("restic: parse stats: %w", err)
 	}
-	return st, nil
+	return backend.SnapshotSize{Bytes: st.TotalSize, Files: st.TotalFileCount}, nil
 }
 
 // Locks lists the locks currently present in the repository.
-func (c *Client) Locks(ctx context.Context, repo Repo) ([]Lock, error) {
-	out, err := c.run(ctx, repo, "list", "locks", "--no-lock", "--quiet")
+func (c *Client) Locks(ctx context.Context, ref backend.Ref) ([]domain.Lock, error) {
+	out, err := c.capture(ctx, ref, "list", "locks", "--no-lock", "--quiet")
 	if err != nil {
 		return nil, err
 	}
-	var locks []Lock
+	var locks []domain.Lock
 	for _, id := range strings.Fields(string(out)) {
-		raw, err := c.run(ctx, repo, "cat", "lock", id, "--no-lock")
+		raw, err := c.capture(ctx, ref, "cat", "lock", id, "--no-lock")
 		if err != nil {
-			var re *Error
-			if errors.As(err, &re) && re.Kind == KindOther {
+			var be *backend.Error
+			if errors.As(err, &be) && be.Kind == backend.KindOther {
 				continue // the lock vanished between list and cat
 			}
 			return nil, err
 		}
-		l := Lock{ID: id}
+		var l struct {
+			Time      time.Time `json:"time"`
+			Exclusive bool      `json:"exclusive"`
+			Hostname  string    `json:"hostname"`
+			Username  string    `json:"username"`
+			PID       int       `json:"pid"`
+		}
 		if err := json.Unmarshal(raw, &l); err != nil {
 			return nil, fmt.Errorf("restic: parse lock %s: %w", id, err)
 		}
-		locks = append(locks, l)
+		locks = append(locks, domain.Lock{ID: id, Time: l.Time, Host: l.Hostname, Username: l.Username, PID: l.PID, Exclusive: l.Exclusive})
 	}
 	return locks, nil
 }
 
+// RepoSize adds up the files of a local repository.
+func (c *Client) RepoSize(_ context.Context, ref backend.Ref) (int64, error) {
+	if ref.Kind != domain.BackendLocal {
+		return 0, backend.Unsupported("the size of %q repositories is not available", ref.Kind)
+	}
+	return dirSize(ref.Location)
+}
+
 // List returns the direct children of dir inside a snapshot. dir uses forward
 // slashes and starts with "/".
-func (c *Client) List(ctx context.Context, repo Repo, snapshotID, dir string) ([]Node, error) {
-	dir = CleanPath(dir)
-	out, err := c.run(ctx, repo, "ls", "--json", "--no-lock", snapshotID, dir)
+func (c *Client) List(ctx context.Context, ref backend.Ref, snapshotID, dir string) ([]backend.Node, error) {
+	dir = backend.CleanPath(dir)
+	out, err := c.capture(ctx, ref, "ls", "--json", "--no-lock", snapshotID, dir)
 	if err != nil {
 		return nil, err
 	}
-	var nodes []Node
+	var nodes []backend.Node
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -203,111 +217,83 @@ func (c *Client) List(ctx context.Context, repo Repo, snapshotID, dir string) ([
 		if json.Unmarshal(line, &head) != nil || head.StructType != "node" {
 			continue // the snapshot header line
 		}
-		var n Node
+		var n nodeJSON
 		if err := json.Unmarshal(line, &n); err != nil {
 			return nil, fmt.Errorf("restic: parse node: %w", err)
 		}
 		if n.Path == dir { // `ls` also reports the directory itself
 			continue
 		}
-		nodes = append(nodes, n)
+		nodes = append(nodes, backend.Node(n))
 	}
 	return nodes, nil
 }
 
 // Node finds a single entry of a snapshot by its path.
-func (c *Client) Node(ctx context.Context, repo Repo, snapshotID, p string) (Node, error) {
-	p = CleanPath(p)
+func (c *Client) Node(ctx context.Context, ref backend.Ref, snapshotID, p string) (backend.Node, error) {
+	p = backend.CleanPath(p)
 	if p == "/" {
-		return Node{Name: "", Type: "dir", Path: "/"}, nil
+		return backend.Node{Type: "dir", Path: "/"}, nil
 	}
-	nodes, err := c.List(ctx, repo, snapshotID, path.Dir(p))
+	nodes, err := c.List(ctx, ref, snapshotID, path.Dir(p))
 	if err != nil {
-		return Node{}, err
+		return backend.Node{}, err
 	}
 	for _, n := range nodes {
 		if n.Path == p {
 			return n, nil
 		}
 	}
-	return Node{}, &Error{Kind: KindOther, Code: 1, Message: "path not found in snapshot: " + p}
+	return backend.Node{}, &backend.Error{Kind: backend.KindOther, Message: "path not found in snapshot: " + p}
 }
 
 // Dump writes a file's bytes, or a directory as a tar archive when asTar is set, to w.
-func (c *Client) Dump(ctx context.Context, repo Repo, snapshotID, p string, asTar bool, w io.Writer) error {
+func (c *Client) Dump(ctx context.Context, ref backend.Ref, snapshotID, p string, asTar bool, w io.Writer) error {
 	args := []string{"dump", "--no-lock"}
 	if asTar {
 		args = append(args, "--archive", "tar")
 	}
-	args = append(args, snapshotID, CleanPath(p))
-	return c.streamChecked(ctx, repo, w, args...)
+	return c.stream(ctx, ref, w, append(args, snapshotID, backend.CleanPath(p))...)
 }
 
-// ForgetResult summarises what `restic forget` did.
-type ForgetResult struct {
-	Groups  []ForgetGroup
-	Removed int
-	Kept    int
-}
-
-// Forget applies keep rules and forgets the other snapshots. With dryRun set
-// nothing is changed.
-func (c *Client) Forget(ctx context.Context, repo Repo, keep domain.KeepPolicy, dryRun bool) (ForgetResult, error) {
+// Forget removes the snapshots the keep rules do not match.
+func (c *Client) Forget(ctx context.Context, ref backend.Ref, keep domain.KeepPolicy) (backend.ForgetResult, error) {
 	if keep.Empty() {
-		return ForgetResult{}, errors.New("restic: refusing to forget without any keep rule")
+		return backend.ForgetResult{}, errors.New("restic: refusing to forget without any keep rule")
 	}
-	args := append([]string{"forget", "--json", "--retry-lock", "5m"}, KeepArgs(keep)...)
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
-	out, err := c.run(ctx, repo, args...)
+	args := append([]string{"forget", "--json", "--retry-lock", "5m"}, keepArgs(keep)...)
+	out, err := c.capture(ctx, ref, args...)
 	if err != nil {
-		return ForgetResult{}, err
+		return backend.ForgetResult{}, err
 	}
-	var res ForgetResult
-	if err := json.Unmarshal(out, &res.Groups); err != nil {
-		return ForgetResult{}, fmt.Errorf("restic: parse forget output: %w", err)
+	var groups []struct {
+		Keep   []snapshotJSON `json:"keep"`
+		Remove []snapshotJSON `json:"remove"`
 	}
-	for _, g := range res.Groups {
-		res.Removed += len(g.Remove)
+	if err := json.Unmarshal(out, &groups); err != nil {
+		return backend.ForgetResult{}, fmt.Errorf("restic: parse forget output: %w", err)
+	}
+	var res backend.ForgetResult
+	for _, g := range groups {
 		res.Kept += len(g.Keep)
+		res.Removed = append(res.Removed, toSnapshots(g.Remove)...)
 	}
 	return res, nil
 }
 
-// Prune removes unreferenced data; its progress text goes to log.
-func (c *Client) Prune(ctx context.Context, repo Repo, log io.Writer) error {
-	return c.logged(ctx, repo, log, "prune", "--retry-lock", "5m")
-}
+// prunedRe matches the summary line of `restic prune`: "total prune: 12 blobs / 3.4 MiB".
+var prunedRe = regexp.MustCompile(`(?m)^total prune:\s+\d+ blobs / (\S+ \S+)`)
 
-// logged runs a command whose stdout and stderr both go to log.
-func (c *Client) logged(ctx context.Context, repo Repo, log io.Writer, args ...string) error {
-	var errOut bytes.Buffer
-	w := io.MultiWriter(log, &errOut)
-	if err := c.stream(ctx, repo, w, w, args...); err != nil {
-		return wrapRunError(ctx, err, nil, errOut.Bytes())
+// Prune removes unreferenced data; restic's progress text goes to log.
+func (c *Client) Prune(ctx context.Context, ref backend.Ref, log io.Writer) (backend.PruneResult, error) {
+	var output bytes.Buffer
+	w := io.MultiWriter(log, &output)
+	if err := c.exec(ctx, ref, w, w, "prune", "--retry-lock", "5m"); err != nil {
+		return backend.PruneResult{}, wrapRunError(ctx, err, nil, output.Bytes())
 	}
-	return nil
-}
-
-// KeepArgs converts a keep policy into restic command line flags.
-func KeepArgs(k domain.KeepPolicy) []string {
-	var a []string
-	add := func(flag string, n int) {
-		if n > 0 {
-			a = append(a, flag, strconv.Itoa(n))
-		}
+	var res backend.PruneResult
+	if m := prunedRe.FindStringSubmatch(output.String()); m != nil {
+		res.Freed = m[1]
 	}
-	add("--keep-last", k.Last)
-	add("--keep-daily", k.Daily)
-	add("--keep-weekly", k.Weekly)
-	add("--keep-monthly", k.Monthly)
-	add("--keep-yearly", k.Yearly)
-	return a
-}
-
-// CleanPath normalises a path inside a snapshot to an absolute, slash-separated path.
-func CleanPath(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	return path.Clean("/" + p)
+	return res, nil
 }

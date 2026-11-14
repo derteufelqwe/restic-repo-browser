@@ -6,7 +6,7 @@
       <h2><a href="/repos/{{$s.Repo.ID}}">{{$s.Repo.Name}}</a></h2>
       {{template "status" $s}}
     </div>
-    <p class="url mono">{{$s.Repo.Path}}</p>
+    <p class="url mono">{{$s.Repo.Location}}</p>
     {{if $s.Repo.Unreachable}}<p class="err">{{$s.Repo.RefreshError}}</p>{{end}}
   </div>
   <div class="spark">

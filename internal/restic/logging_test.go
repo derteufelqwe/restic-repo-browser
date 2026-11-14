@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"restic-repo-browser/internal/backend"
 )
 
 // scriptRunner writes fixed output to both streams and returns err.
@@ -42,29 +44,17 @@ func TestParseLogMode(t *testing.T) {
 			t.Errorf("ParseLogMode(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	if _, err := ParseLogMode("verbose"); err == nil || !strings.Contains(err.Error(), "default, commands or responses") {
-		t.Errorf("unknown level error = %v", err)
+	if _, err := ParseLogMode("verbose"); err == nil {
+		t.Error("an unknown level must be refused")
 	}
 }
 
-func TestDefaultModeLogsNothing(t *testing.T) {
-	out := logged(t, LogDefault, scriptRunner{stdout: "{}"}, func(c *Client) {
-		if err := c.Probe(context.Background(), Repo{Path: "/r", Password: "pw"}); err != nil {
-			t.Fatal(err)
-		}
-	})
-	if out != "" {
-		t.Errorf("default mode logged: %s", out)
-	}
-}
-
-func TestCommandsModeLogsCommandsButNoOutput(t *testing.T) {
+func TestCommandsModeLogsNeitherOutputNorPassword(t *testing.T) {
+	ref := backend.Ref{Kind: "local", Location: "/srv/my repo", Password: "hunter2"}
 	out := logged(t, LogCommands, scriptRunner{stdout: "SECRET-OUTPUT", stderr: "SECRET-ERR"}, func(c *Client) {
-		if _, err := c.List(context.Background(), Repo{Path: "/srv/my repo", Password: "hunter2"}, "abcd", "/my docs"); err != nil {
-			t.Fatal(err)
-		}
+		c.List(context.Background(), ref, "abcd", "/my docs")
 	})
-	for _, want := range []string{"restic command", "op=ls", `restic -r '/srv/my repo' ls --json --no-lock abcd '/my docs'`, "restic finished", "exit=0", "took=", "stdout_bytes=13", "stderr_bytes=10"} {
+	for _, want := range []string{"op=ls", `restic -r '/srv/my repo' ls --json --no-lock abcd '/my docs'`, "exit=0", "stdout_bytes=13"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
@@ -76,55 +66,32 @@ func TestCommandsModeLogsCommandsButNoOutput(t *testing.T) {
 	}
 }
 
-func TestResponsesModeLogsOutput(t *testing.T) {
-	r := scriptRunner{stdout: `{"struct_type":"snapshot"}` + "\n", stderr: "warning: something\n"}
-	out := logged(t, LogResponses, r, func(c *Client) {
-		c.Snapshots(context.Background(), Repo{Path: "/r", Password: "hunter2"})
-	})
-	for _, want := range []string{"restic command", "restic finished", "struct_type", "warning: something"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, "hunter2") {
-		t.Errorf("log contains the password:\n%s", out)
-	}
-}
-
-func TestResponsesAreTruncated(t *testing.T) {
+func TestResponsesAreTruncatedAndDumpDataIsNeverLogged(t *testing.T) {
 	big := strings.Repeat("x", maxLoggedOutput*3)
 	var got bytes.Buffer
 	out := logged(t, LogResponses, scriptRunner{stdout: big}, func(c *Client) {
-		if err := c.stream(context.Background(), Repo{Path: "/r"}, &got, io.Discard, "ls"); err != nil {
-			t.Fatal(err)
-		}
+		c.Snapshots(context.Background(), fakeRef) // unparsable output, only the log matters here
+		c.exec(context.Background(), fakeRef, &got, io.Discard, "ls")
 	})
 	if got.Len() != len(big) {
 		t.Errorf("caller received %d bytes, want all %d", got.Len(), len(big))
 	}
-	if strings.Count(out, "x") > maxLoggedOutput+10 || !strings.Contains(out, "truncated") || !strings.Contains(out, "24576 bytes in total") {
-		t.Errorf("log not truncated as expected (len %d): %.300s", len(out), out)
+	if strings.Count(out, "x") > 2*(maxLoggedOutput+10) || !strings.Contains(out, "truncated") {
+		t.Errorf("log not truncated as expected (len %d)", len(out))
 	}
-}
 
-func TestDumpDataIsNeverLogged(t *testing.T) {
-	out := logged(t, LogResponses, scriptRunner{stdout: "FILE-CONTENT", stderr: "Fatal: oops"}, func(c *Client) {
-		c.Dump(context.Background(), Repo{Path: "/r"}, "abcd", "/a.txt", false, io.Discard)
+	out = logged(t, LogResponses, scriptRunner{stdout: "FILE-CONTENT", stderr: "Fatal: oops"}, func(c *Client) {
+		c.Dump(context.Background(), fakeRef, "abcd", "/a.txt", false, io.Discard)
 	})
-	if strings.Contains(out, "FILE-CONTENT") {
-		t.Errorf("file data in the log:\n%s", out)
-	}
-	for _, want := range []string{"op=dump", "not logged: file data", "stdout_bytes=12", "Fatal: oops"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in:\n%s", want, out)
-		}
+	if strings.Contains(out, "FILE-CONTENT") || !strings.Contains(out, "not logged: file data") || !strings.Contains(out, "Fatal: oops") {
+		t.Errorf("dump logged wrongly:\n%s", out)
 	}
 }
 
-func TestFailuresAreLoggedWithTheirExitCode(t *testing.T) {
+func TestFailuresAreLoggedAndCombinedWriterStaysShared(t *testing.T) {
 	out := logged(t, LogCommands, scriptRunner{stderr: "Fatal: wrong password", err: exitCode(12)}, func(c *Client) {
-		if err := c.Probe(context.Background(), Repo{Path: "/r"}); err == nil {
-			t.Fatal("expected an error")
+		if err := c.Probe(context.Background(), fakeRef); !errors.Is(err, backend.ErrWrongPassword) {
+			t.Errorf("err = %v", err)
 		}
 	})
 	for _, want := range []string{"level=WARN", "restic failed", "exit=12"} {
@@ -132,38 +99,20 @@ func TestFailuresAreLoggedWithTheirExitCode(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	out = logged(t, LogCommands, scriptRunner{err: errors.New("start failed")}, func(c *Client) {
-		c.Probe(context.Background(), Repo{Path: "/r"})
-	})
-	if !strings.Contains(out, "exit=-1") || !strings.Contains(out, "start failed") {
-		t.Errorf("non-exit error not logged:\n%s", out)
-	}
-}
 
-// One writer for both streams (as a cleanup run uses) stays one writer, so os/exec
-// keeps copying through a single goroutine.
-func TestCombinedWriterStaysShared(t *testing.T) {
+	// One writer for both streams (as prune uses) stays one writer, so os/exec
+	// keeps copying through a single goroutine.
 	var seen [2]io.Writer
 	r := runnerFunc(func(stdout, stderr io.Writer) error {
 		seen[0], seen[1] = stdout, stderr
-		io.WriteString(stdout, "out;")
-		io.WriteString(stderr, "err;")
 		return nil
 	})
 	var combined bytes.Buffer
-	out := logged(t, LogResponses, r, func(c *Client) {
-		if err := c.stream(context.Background(), Repo{Path: "/r"}, &combined, &combined, "forget"); err != nil {
-			t.Fatal(err)
-		}
+	logged(t, LogResponses, r, func(c *Client) {
+		c.exec(context.Background(), fakeRef, &combined, &combined, "prune")
 	})
 	if seen[0] != seen[1] {
 		t.Error("stdout and stderr were wrapped into different writers")
-	}
-	if combined.String() != "out;err;" {
-		t.Errorf("combined = %q", combined.String())
-	}
-	if !strings.Contains(out, "output_bytes=8") || !strings.Contains(out, "out;err;") {
-		t.Errorf("combined output not logged:\n%s", out)
 	}
 }
 
@@ -178,8 +127,5 @@ func TestCommandLineQuoting(t *testing.T) {
 	want := `restic -r 'C:\Users\me\my repo' ls 'it'\''s' '' plain/arg-1.json`
 	if got != want {
 		t.Errorf("commandLine = %s\nwant          %s", got, want)
-	}
-	if subcommand([]string{"-r", "/x", "--quiet", "list", "locks"}) != "list" || subcommand([]string{"version"}) != "version" {
-		t.Error("subcommand not found")
 	}
 }

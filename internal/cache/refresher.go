@@ -1,6 +1,6 @@
 // Package cache keeps the SQLite copy of every repository's data up to date.
 // The web UI only reads that copy; this package is the one place that asks
-// restic for snapshots, sizes and locks. A "sync" runs once a day, after each
+// the backend for snapshots, sizes and locks. A "sync" runs once a day, after each
 // cleanup run and on demand, and only one task runs at a time.
 package cache
 
@@ -8,14 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"time"
 
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/store"
 	"restic-repo-browser/internal/tasks"
 )
@@ -33,11 +31,12 @@ type Store interface {
 	Setting(ctx context.Context, key, def string) (string, error)
 }
 
-// Restic is the part of the restic client the refresher needs.
-type Restic interface {
-	Snapshots(ctx context.Context, repo restic.Repo) ([]restic.Snapshot, error)
-	SnapshotStats(ctx context.Context, repo restic.Repo, snapshotID string) (restic.Stats, error)
-	Locks(ctx context.Context, repo restic.Repo) ([]restic.Lock, error)
+// Backend is the part of the repository backend the refresher needs.
+type Backend interface {
+	Snapshots(ctx context.Context, ref backend.Ref) ([]domain.Snapshot, error)
+	SnapshotSize(ctx context.Context, ref backend.Ref, snapshotID string) (backend.SnapshotSize, error)
+	Locks(ctx context.Context, ref backend.Ref) ([]domain.Lock, error)
+	RepoSize(ctx context.Context, ref backend.Ref) (int64, error)
 }
 
 // DefaultRefreshTime is the daily sync time until the user changes it.
@@ -51,11 +50,11 @@ var ErrNotStarted = errors.New("the sync service is not running")
 
 // Refresher syncs repositories into the cache.
 type Refresher struct {
-	store  Store
-	restic Restic
-	tasks  *tasks.Manager
-	log    *slog.Logger
-	now    func() time.Time
+	store   Store
+	backend Backend
+	tasks   *tasks.Manager
+	log     *slog.Logger
+	now     func() time.Time
 
 	mu      sync.Mutex
 	base    context.Context // set by Run; user-started syncs run under it
@@ -64,8 +63,8 @@ type Refresher struct {
 }
 
 // New creates a Refresher.
-func New(st Store, rc Restic, tm *tasks.Manager, log *slog.Logger) *Refresher {
-	return &Refresher{store: st, restic: rc, tasks: tm, log: log, now: time.Now, resched: make(chan struct{}, 1)}
+func New(st Store, be Backend, tm *tasks.Manager, log *slog.Logger) *Refresher {
+	return &Refresher{store: st, backend: be, tasks: tm, log: log, now: time.Now, resched: make(chan struct{}, 1)}
 }
 
 // Reschedule tells the daily timer to re-read the sync time setting.
@@ -232,20 +231,19 @@ func (r *Refresher) Refresh(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("load repository %d: %w", id, err)
 	}
-	password, err := r.store.RepoPassword(ctx, id)
+	ref, err := backend.Resolve(ctx, r.store, repo)
 	if err != nil {
 		return err
 	}
-	rr := restic.Repo{Path: repo.Path, Password: password}
 
 	started := r.now()
-	size, err := r.fetch(ctx, repo, rr)
+	size, err := r.fetch(ctx, repo, ref)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	result := store.RefreshResult{At: started, Size: size}
 	if err != nil {
-		result.Err = restic.UserMessage(err)
+		result.Err = backend.UserMessage(err)
 		r.log.Warn("repository unreachable", "repo", repo.Name, "err", err)
 	}
 	if saveErr := r.store.SaveRefresh(ctx, id, result); saveErr != nil {
@@ -259,36 +257,38 @@ func (r *Refresher) Refresh(ctx context.Context, id int64) error {
 }
 
 // fetch reads everything from the repository into the store and returns its size on disk.
-func (r *Refresher) fetch(ctx context.Context, repo domain.Repo, rr restic.Repo) (int64, error) {
+func (r *Refresher) fetch(ctx context.Context, repo domain.Repo, ref backend.Ref) (int64, error) {
 	tasks.Detail(ctx, repo.Name+": reading the snapshot list")
-	snaps, err := r.restic.Snapshots(ctx, rr)
+	snaps, err := r.backend.Snapshots(ctx, ref)
 	if err != nil {
 		return 0, err
 	}
-	if err := r.store.SyncSnapshots(ctx, repo.ID, toDomain(snaps)); err != nil {
+	if err := r.store.SyncSnapshots(ctx, repo.ID, snaps); err != nil {
 		return 0, err
 	}
-	r.fillMissingSizes(ctx, repo, rr)
+	r.fillMissingSizes(ctx, repo, ref)
 
 	tasks.Detail(ctx, repo.Name+": checking for locks")
-	locks, err := r.restic.Locks(ctx, rr)
+	locks, err := r.backend.Locks(ctx, ref)
 	if err != nil {
 		r.log.Warn("reading locks failed", "repo", repo.Name, "err", err)
-	} else if err := r.store.ReplaceLocks(ctx, repo.ID, toDomainLocks(locks)); err != nil {
+	} else if err := r.store.ReplaceLocks(ctx, repo.ID, locks); err != nil {
 		return 0, err
 	}
 	tasks.Detail(ctx, repo.Name+": measuring the repository size")
-	size, err := DirSize(repo.Path)
+	size, err := r.backend.RepoSize(ctx, ref)
 	if err != nil {
-		r.log.Warn("measuring repository size failed", "repo", repo.Name, "err", err)
-		return repo.SizeBytes, nil
+		if !errors.Is(err, backend.ErrUnsupported) {
+			r.log.Warn("measuring repository size failed", "repo", repo.Name, "err", err)
+		}
+		return repo.SizeBytes, nil // keep the last known size
 	}
 	return size, nil
 }
 
 // fillMissingSizes computes the size of snapshots that carry no summary
 // (made by restic before 0.17). Snapshots never change, so this happens once per snapshot.
-func (r *Refresher) fillMissingSizes(ctx context.Context, repo domain.Repo, rr restic.Repo) {
+func (r *Refresher) fillMissingSizes(ctx context.Context, repo domain.Repo, ref backend.Ref) {
 	ids, err := r.store.SnapshotsWithoutSize(ctx, repo.ID)
 	if err != nil {
 		r.log.Warn("listing snapshots without size", "err", err)
@@ -299,57 +299,13 @@ func (r *Refresher) fillMissingSizes(ctx context.Context, repo domain.Repo, rr r
 			return
 		}
 		tasks.Detail(ctx, fmt.Sprintf("%s: computing snapshot sizes (%d of %d)", repo.Name, i+1, len(ids)))
-		st, err := r.restic.SnapshotStats(ctx, rr, id)
+		size, err := r.backend.SnapshotSize(ctx, ref, id)
 		if err != nil {
-			r.log.Warn("restic stats failed", "snapshot", id, "err", err)
+			r.log.Warn("computing snapshot size failed", "snapshot", id, "err", err)
 			continue
 		}
-		if err := r.store.SetSnapshotSize(ctx, repo.ID, id, st.TotalSize, st.TotalFileCount); err != nil {
+		if err := r.store.SetSnapshotSize(ctx, repo.ID, id, size.Bytes, size.Files); err != nil {
 			r.log.Warn("saving snapshot size", "snapshot", id, "err", err)
 		}
 	}
-}
-
-func toDomain(in []restic.Snapshot) []domain.Snapshot {
-	out := make([]domain.Snapshot, len(in))
-	for i, s := range in {
-		d := domain.Snapshot{
-			ID: s.ID, ShortID: s.ShortID, Time: s.Time, Host: s.Hostname, Username: s.Username,
-			Paths: s.Paths, Tags: s.Tags,
-		}
-		if s.Summary != nil {
-			size, added, files := s.Summary.TotalBytesProcessed, s.Summary.DataAdded, s.Summary.TotalFilesProcessed
-			d.Size, d.Added, d.Files = &size, &added, &files
-		}
-		out[i] = d
-	}
-	return out
-}
-
-func toDomainLocks(in []restic.Lock) []domain.Lock {
-	out := make([]domain.Lock, len(in))
-	for i, l := range in {
-		out[i] = domain.Lock{ID: l.ID, Time: l.Time, Host: l.Hostname, Username: l.Username, PID: l.PID, Exclusive: l.Exclusive}
-	}
-	return out
-}
-
-// DirSize adds up the size of all files below root.
-func DirSize(root string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil // file vanished mid-walk (a backup rewrote it)
-		}
-		total += info.Size()
-		return nil
-	})
-	return total, err
 }

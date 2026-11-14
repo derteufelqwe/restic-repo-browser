@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -191,15 +192,15 @@ type snapshotQuery struct {
 	Per    int
 }
 
-var perPageOptions = []int{15, 30, 50}
+var perPageOptions = []int{defaultPerPage, 30, 50}
 
 func parseSnapshotQuery(r *http.Request) snapshotQuery {
 	q := r.URL.Query()
 	sq := snapshotQuery{
 		Filter: domain.SnapshotFilter{Query: q.Get("q"), Host: q.Get("host"), Tag: q.Get("tag")},
-		Label:  q.Get("label"), Page: atoiDefault(q.Get("page"), 1), Per: 15,
+		Label:  q.Get("label"), Page: atoiDefault(q.Get("page"), 1), Per: defaultPerPage,
 	}
-	if n := atoiDefault(q.Get("per"), 15); n == 15 || n == 30 || n == 50 {
+	if n := atoiDefault(q.Get("per"), defaultPerPage); slices.Contains(perPageOptions, n) {
 		sq.Per = n
 	}
 	if v, err := strconv.ParseInt(q.Get("from"), 10, 64); err == nil && v > 0 {
@@ -222,7 +223,7 @@ func atoiDefault(s string, def int) int {
 type snapshotList struct {
 	S        domain.Summary
 	Query    snapshotQuery
-	Page     domain.Page[domain.Snapshot]
+	Page     Page[domain.Snapshot]
 	Links    []int
 	Hosts    []string
 	Tags     []string
@@ -240,7 +241,7 @@ func (s *Server) buildSnapshotList(sum domain.Summary, q snapshotQuery) snapshot
 			matches = append(matches, sum.Snapshots[i])
 		}
 	}
-	page := domain.Paginate(matches, q.Page, q.Per)
+	page := Paginate(matches, q.Page, q.Per)
 	l := snapshotList{
 		S: sum, Query: q, Page: page, Links: page.PageLinks(),
 		Hosts: sum.Hosts(), Tags: sum.Tags(), PerOpts: perPageOptions,

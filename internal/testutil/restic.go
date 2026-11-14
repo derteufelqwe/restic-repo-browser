@@ -44,3 +44,14 @@ func Restic(t testing.TB, bin, repo, password string, args ...string) []byte {
 	}
 	return out
 }
+
+// WriteFile creates a file (and its folders) with the given content.
+func WriteFile(t testing.TB, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

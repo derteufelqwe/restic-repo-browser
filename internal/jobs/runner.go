@@ -10,13 +10,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/schedule"
 	"restic-repo-browser/internal/tasks"
 )
@@ -38,10 +37,10 @@ type Store interface {
 	AbandonRunningRuns(ctx context.Context, at time.Time) error
 }
 
-// Restic is the part of the restic client the runner needs.
-type Restic interface {
-	Forget(ctx context.Context, repo restic.Repo, keep domain.KeepPolicy, dryRun bool) (restic.ForgetResult, error)
-	Prune(ctx context.Context, repo restic.Repo, log io.Writer) error
+// Backend is the part of the repository backend the runner needs.
+type Backend interface {
+	Forget(ctx context.Context, ref backend.Ref, keep domain.KeepPolicy) (backend.ForgetResult, error)
+	Prune(ctx context.Context, ref backend.Ref, log io.Writer) (backend.PruneResult, error)
 }
 
 // Syncer refreshes the cached data of a repository after a run changed it.
@@ -51,13 +50,13 @@ type Syncer interface {
 
 // Runner executes cleanup jobs.
 type Runner struct {
-	store  Store
-	restic Restic
-	syncer Syncer
-	tasks  *tasks.Manager
-	log    *slog.Logger
-	now    func() time.Time
-	tick   time.Duration
+	store   Store
+	backend Backend
+	syncer  Syncer
+	tasks   *tasks.Manager
+	log     *slog.Logger
+	now     func() time.Time
+	tick    time.Duration
 
 	mu   sync.Mutex
 	base context.Context // set by Start; runs started by RunNow inherit it
@@ -65,8 +64,8 @@ type Runner struct {
 }
 
 // New creates a Runner.
-func New(st Store, rc Restic, sy Syncer, tm *tasks.Manager, log *slog.Logger) *Runner {
-	return &Runner{store: st, restic: rc, syncer: sy, tasks: tm, log: log, now: time.Now, tick: 15 * time.Second}
+func New(st Store, be Backend, sy Syncer, tm *tasks.Manager, log *slog.Logger) *Runner {
+	return &Runner{store: st, backend: be, syncer: sy, tasks: tm, log: log, now: time.Now, tick: 15 * time.Second}
 }
 
 // Start launches the scheduler. It returns immediately; the scheduler and any
@@ -203,7 +202,7 @@ func (r *Runner) execute(ctx context.Context, job domain.Job, task *tasks.Task) 
 	runErr := r.perform(ctx, job, log, &summary)
 	if runErr != nil {
 		status = domain.RunFailed
-		summary = restic.UserMessage(runErr)
+		summary = backend.UserMessage(runErr)
 		fmt.Fprintf(log, "\nError: %v\nJob stopped. It will try again at the next scheduled run.\n", runErr)
 	}
 	// Record the outcome even when the server is shutting down.
@@ -222,54 +221,64 @@ func (r *Runner) execute(ctx context.Context, job domain.Job, task *tasks.Task) 
 	task.Finish(runErr)
 }
 
-var prunedRe = regexp.MustCompile(`(?m)^total prune:\s+\d+ blobs / (\S+ \S+)`)
-
 // perform runs the steps of a job and sets summary on success.
 func (r *Runner) perform(ctx context.Context, job domain.Job, log *safeBuffer, summary *string) error {
 	repo, err := r.store.Repo(ctx, job.RepoID)
 	if err != nil {
 		return err
 	}
-	password, err := r.store.RepoPassword(ctx, job.RepoID)
+	ref, err := backend.Resolve(ctx, r.store, repo)
 	if err != nil {
 		return err
 	}
-	rr := restic.Repo{Path: repo.Path, Password: password}
 
 	tasks.Step(ctx, "Forgetting snapshots that the keep rules do not match")
-	fmt.Fprintf(log, "$ restic forget %s\n", strings.Join(restic.KeepArgs(job.Keep), " "))
-	res, err := r.restic.Forget(ctx, rr, job.Keep, false)
+	fmt.Fprintf(log, "Forgetting snapshots (keep rules: %s)\n", keepRules(job.Keep))
+	res, err := r.backend.Forget(ctx, ref, job.Keep)
 	if err != nil {
 		return err
 	}
 	writeForgetReport(log, res)
-	parts := []string{fmt.Sprintf("Forgot %d snapshot%s", res.Removed, plural(res.Removed))}
+	parts := []string{fmt.Sprintf("Forgot %d snapshot%s", len(res.Removed), plural(len(res.Removed)))}
 
 	if job.Prune {
 		tasks.Step(ctx, "Pruning unused data (this can take a while)")
-		fmt.Fprint(log, "\n$ restic prune\n")
-		if err := r.restic.Prune(ctx, rr, log); err != nil {
+		fmt.Fprint(log, "\nPruning unused data\n")
+		pruned, err := r.backend.Prune(ctx, ref, log)
+		if err != nil {
 			return err
 		}
-		if m := prunedRe.FindStringSubmatch(log.String()); m != nil {
-			parts = append(parts, "freed "+m[1])
+		if pruned.Freed != "" {
+			parts = append(parts, "freed "+pruned.Freed)
 		}
 	}
 	*summary = strings.Join(parts, ", ")
 	return nil
 }
 
-func writeForgetReport(w io.Writer, res restic.ForgetResult) {
-	fmt.Fprintf(w, "keep %d snapshots\nremove %d snapshots", res.Kept, res.Removed)
-	if res.Removed == 0 {
+// keepRules lists the rules of a policy for the run log ("last 7, daily 14").
+func keepRules(k domain.KeepPolicy) string {
+	var parts []string
+	for _, r := range []struct {
+		name string
+		n    int
+	}{{"last", k.Last}, {"daily", k.Daily}, {"weekly", k.Weekly}, {"monthly", k.Monthly}, {"yearly", k.Yearly}} {
+		if r.n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", r.name, r.n))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func writeForgetReport(w io.Writer, res backend.ForgetResult) {
+	fmt.Fprintf(w, "keep %d snapshots\nremove %d snapshots", res.Kept, len(res.Removed))
+	if len(res.Removed) == 0 {
 		fmt.Fprintln(w)
 		return
 	}
 	fmt.Fprint(w, ":\nID        Time                 Host        Paths\n")
-	for _, g := range res.Groups {
-		for _, s := range g.Remove {
-			fmt.Fprintf(w, "%-9s %-20s %-11s %s\n", s.ShortID, s.Time.Format("2006-01-02 15:04:05"), s.Hostname, strings.Join(s.Paths, ", "))
-		}
+	for _, s := range res.Removed {
+		fmt.Fprintf(w, "%-9s %-20s %-11s %s\n", s.ShortID, s.Time.Format("2006-01-02 15:04:05"), s.Host, strings.Join(s.Paths, ", "))
 	}
 }
 

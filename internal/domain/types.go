@@ -8,12 +8,21 @@ import (
 	"time"
 )
 
-// Repo is a restic repository on a local disk. The password is never part of
-// this type; it is only handed out by the store when a restic command needs it.
+// BackendKind says where a repository lives and therefore how it is reached.
+type BackendKind string
+
+// BackendLocal is a repository in a folder on the machine running the server.
+// Further kinds (a REST server, rclone) would be added here.
+const BackendLocal BackendKind = "local"
+
+// Repo is a restic repository. The password is never part of this type; it is
+// only handed out by the store when the backend needs it.
 type Repo struct {
-	ID        int64
-	Name      string
-	Path      string
+	ID      int64
+	Name    string
+	Backend BackendKind
+	// Location is where the repository is: a folder path for BackendLocal.
+	Location  string
 	CreatedAt time.Time
 
 	// RefreshedAt is the last refresh attempt, RefreshOKAt the last successful one.

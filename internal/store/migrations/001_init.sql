@@ -3,13 +3,15 @@
 CREATE TABLE repos (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     name           TEXT    NOT NULL UNIQUE,
-    path           TEXT    NOT NULL,
+    backend        TEXT    NOT NULL DEFAULT 'local', -- how the repository is reached
+    location       TEXT    NOT NULL,                 -- folder path for the local backend
     password_enc   BLOB    NOT NULL,
     created_at     INTEGER NOT NULL,
     refreshed_at   INTEGER NOT NULL DEFAULT 0,
     refresh_ok_at  INTEGER NOT NULL DEFAULT 0,
     refresh_error  TEXT    NOT NULL DEFAULT '',
-    size_bytes     INTEGER NOT NULL DEFAULT 0
+    size_bytes     INTEGER NOT NULL DEFAULT 0,
+    backup_cron    TEXT    NOT NULL DEFAULT ''       -- when backups are expected; empty: judged from the snapshot gaps
 );
 
 CREATE TABLE snapshots (
@@ -44,15 +46,11 @@ CREATE TABLE jobs (
     repo_id       INTEGER PRIMARY KEY REFERENCES repos(id) ON DELETE CASCADE,
     cron          TEXT    NOT NULL,
     keep_last     INTEGER NOT NULL DEFAULT 0,
-    keep_hourly   INTEGER NOT NULL DEFAULT 0,
     keep_daily    INTEGER NOT NULL DEFAULT 0,
     keep_weekly   INTEGER NOT NULL DEFAULT 0,
     keep_monthly  INTEGER NOT NULL DEFAULT 0,
     keep_yearly   INTEGER NOT NULL DEFAULT 0,
-    keep_within   TEXT    NOT NULL DEFAULT '',
-    keep_tag      TEXT    NOT NULL DEFAULT '',
     prune         INTEGER NOT NULL DEFAULT 1,
-    check_mode    TEXT    NOT NULL DEFAULT 'none',
     enabled       INTEGER NOT NULL DEFAULT 1
 );
 

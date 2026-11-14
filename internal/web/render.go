@@ -19,8 +19,13 @@ import (
 // plus the page's own "content" block.
 type pageTemplate struct{ *template.Template }
 
+// partialsSet is the key of the template set that serves fragments (htmx swap
+// targets): layout and partials only, no page.
+const partialsSet = "partials"
+
 // loadTemplates parses layout + partials into a base set and clones it once per
-// page, so every page can define its own "content" block.
+// page, so every page can define its own "content" block. The base set itself
+// is returned under partialsSet.
 func loadTemplates(funcs template.FuncMap) (map[string]*pageTemplate, error) {
 	base := template.New("base").Funcs(funcs)
 	for _, pattern := range []string{"templates/layout.html", "templates/partials/*.html"} {
@@ -43,31 +48,26 @@ func loadTemplates(funcs template.FuncMap) (map[string]*pageTemplate, error) {
 		}
 		pages[strings.TrimSuffix(path.Base(f), ".html")] = &pageTemplate{clone}
 	}
+	pages[partialsSet] = &pageTemplate{base}
 	return pages, nil
 }
 
 func (s *Server) funcs() template.FuncMap {
 	now := s.Now
 	return template.FuncMap{
-		"bytes":    func(n int64) string { return format.Size(n) },
-		"num":      func(n int) string { return format.Int(int64(n)) },
-		"num64":    func(n int64) string { return format.Int(n) },
-		"date":     func(t time.Time) string { return format.Date(t, now(), true) },
-		"day":      func(t time.Time) string { return format.Date(t, now(), false) },
-		"rel":      func(t time.Time) string { return format.Rel(t, now()) },
-		"future":   func(t time.Time) string { return format.Future(t, now()) },
-		"runtime":  format.Run,
-		"duration": format.Duration,
-		"clock":    func(t time.Time) string { return t.Format("15:04") },
+		"bytes":   func(n int64) string { return format.Size(n) },
+		"num":     func(n int) string { return format.Int(int64(n)) },
+		"num64":   func(n int64) string { return format.Int(n) },
+		"date":    func(t time.Time) string { return format.Date(t, now(), true) },
+		"day":     func(t time.Time) string { return format.Date(t, now(), false) },
+		"rel":     func(t time.Time) string { return format.Rel(t, now()) },
+		"future":  func(t time.Time) string { return format.Future(t, now()) },
+		"runtime": format.Run,
 		"plural": func(n int, one, many string) string {
 			if n == 1 {
 				return one
 			}
 			return many
-		},
-		"json": func(v any) (string, error) {
-			b, err := json.Marshal(v)
-			return string(b), err
 		},
 		"runtime_of": func(r domain.Run) string { return format.Duration(r.Duration(now())) },
 		"download":   downloadURL,
@@ -88,7 +88,6 @@ func (s *Server) funcs() template.FuncMap {
 			return m
 		},
 		"trunc": truncate,
-		"join":  strings.Join,
 		"title": func(s string) string { return strings.ToUpper(s[:1]) + s[1:] },
 	}
 }
@@ -114,12 +113,12 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, name, title,
 
 // renderFragment writes a named partial (an htmx swap target).
 func (s *Server) renderFragment(w http.ResponseWriter, r *http.Request, partial string, data any) {
-	s.execute(w, r, "overview", partial, data, http.StatusOK)
+	s.execute(w, r, partialsSet, partial, data, http.StatusOK)
 }
 
 // renderFragmentStatus is renderFragment with an explicit status code (422 for form errors).
 func (s *Server) renderFragmentStatus(w http.ResponseWriter, r *http.Request, partial string, data any, status int) {
-	s.execute(w, r, "overview", partial, data, status)
+	s.execute(w, r, partialsSet, partial, data, status)
 }
 
 // execute renders into a buffer first so a template error never leaves a half-written page.

@@ -62,7 +62,7 @@ func Parse(args []string, out io.Writer) (Config, error) {
 	fs.Usage = func() { fmt.Fprint(out, usage); fs.PrintDefaults() }
 	fs.StringVar(&cfg.Listen, "listen", "127.0.0.1:8080", "address to listen on, e.g. :8080 to serve the whole network")
 	fs.StringVar(&cfg.DataDir, "data-dir", "data", "directory for the database, key file and restic cache")
-	fs.StringVar(&cfg.ResticBin, "restic", "restic", "path of the restic executable")
+	fs.StringVar(&cfg.ResticBin, "restic", defaultRestic, "path of the restic executable")
 	fs.BoolVar(&cfg.Debug, "debug", false, "log every request")
 	fs.Func("log-level", "restic logging: default, commands (log every restic command) or responses (commands and what restic printed)", func(v string) (err error) {
 		cfg.LogLevel, err = restic.ParseLogMode(v)
@@ -103,16 +103,21 @@ func ResolveBrowseDir(dir string) (string, error) {
 // ErrHelp is returned by Parse when -h was given.
 var ErrHelp = flag.ErrHelp
 
-// ResolveRestic finds the restic executable: the configured path if it exists,
-// else restic on PATH, else next to this executable.
+// defaultRestic is the --restic value that means "look for restic yourself".
+const defaultRestic = "restic"
+
+// ResolveRestic finds the restic executable. An explicit value is a path or a
+// name on PATH; the default is looked up on PATH, then next to this
+// executable, then in the working directory.
 func ResolveRestic(configured string) (string, error) {
-	if configured != "restic" { // explicitly set: use as given
-		if _, err := os.Stat(configured); err != nil {
+	if configured != defaultRestic {
+		p, err := exec.LookPath(configured)
+		if err != nil {
 			return "", fmt.Errorf("restic executable %q not found: %w", configured, err)
 		}
-		return configured, nil
+		return p, nil
 	}
-	if p, err := exec.LookPath("restic"); err == nil {
+	if p, err := exec.LookPath(defaultRestic); err == nil {
 		return p, nil
 	}
 	if self, err := os.Executable(); err == nil {

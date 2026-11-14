@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// The folder picker lets the signed-in user choose a path on the server's own
+// The folder picker (local repositories only) lets the signed-in user choose a path on the server's own
 // disks (for the repository path) instead of typing it. It lists folders only,
 // never file contents.
 

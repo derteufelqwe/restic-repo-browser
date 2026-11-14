@@ -90,18 +90,19 @@ func serve(ctx context.Context, cfg config.Config, browseDir string, log *slog.L
 	if err != nil {
 		return err
 	}
-	rc := restic.New(bin, filepath.Join(cfg.DataDir, "restic-cache"), restic.WithLogging(log, cfg.LogLevel))
-	version, err := rc.Version(ctx)
+	// The restic command line client is the only backend implementation so far.
+	repos := restic.New(bin, filepath.Join(cfg.DataDir, "restic-cache"), restic.WithLogging(log, cfg.LogLevel))
+	version, err := repos.Version(ctx)
 	if err != nil {
 		return fmt.Errorf("run %s: %w", bin, err)
 	}
 	log.Info("starting", "restic", version, "data", cfg.DataDir, "log_level", cfg.LogLevel, "browse_dir", browseDir)
 
 	tm := tasks.NewManager()
-	refresher := cache.New(st, rc, tm, log)
-	runner := jobs.New(st, rc, refresher, tm, log)
+	refresher := cache.New(st, repos, tm, log)
+	runner := jobs.New(st, repos, refresher, tm, log)
 	handler, err := web.New(web.Deps{
-		Store: st, Explorer: rc, Cache: refresher, Jobs: runner, Tasks: tm, Auth: authSvc, Log: log, SecureCookies: cfg.Secure, BrowseDir: browseDir,
+		Store: st, Explorer: repos, Cache: refresher, Jobs: runner, Tasks: tm, Auth: authSvc, Log: log, SecureCookies: cfg.Secure, BrowseDir: browseDir,
 	})
 	if err != nil {
 		return err
@@ -110,16 +111,19 @@ func serve(ctx context.Context, cfg config.Config, browseDir string, log *slog.L
 		log.Warn("no login password set yet: run `restic-browser set-password` before signing in")
 	}
 
+	// Bind the port before any background work starts, so a busy port fails
+	// the start without touching the data.
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", cfg.Listen, err)
+	}
+
 	bg, cancelBg := context.WithCancel(ctx)
 	defer cancelBg()
 	done := make(chan struct{})
 	go func() { refresher.Run(bg); close(done) }()
 	runner.Start(bg)
 
-	ln, err := net.Listen("tcp", cfg.Listen)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", cfg.Listen, err)
-	}
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,

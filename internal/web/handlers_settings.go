@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/cache"
 	"restic-repo-browser/internal/domain"
 	"restic-repo-browser/internal/format"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/schedule"
 	"restic-repo-browser/internal/store"
 )
@@ -94,7 +94,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 type repoForm struct {
 	ID         int64 // 0 for a new repository
 	Name       string
-	Path       string
+	Location   string
 	BackupCron string
 	Error      string
 	NameErr    string
@@ -110,6 +110,14 @@ type cronEcho struct {
 	CronOK   bool
 	CronEcho string
 	NextRuns []string
+}
+
+// invalidScheduleMsg is shown next to every cron input that cannot be parsed.
+const invalidScheduleMsg = "This is not a valid schedule. Use five fields: minute, hour, day of month, month and weekday."
+
+func validSchedule(spec string) bool {
+	_, err := schedule.Parse(spec)
+	return err == nil
 }
 
 func (s *Server) explainCron(spec string) cronEcho {
@@ -149,7 +157,7 @@ func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		f = repoForm{ID: repo.ID, Name: repo.Name, Path: repo.Path, BackupCron: repo.BackupCron}
+		f = repoForm{ID: repo.ID, Name: repo.Name, Location: repo.Location, BackupCron: repo.BackupCron}
 	}
 	f.Cron = s.explainCron(f.BackupCron)
 	s.renderFragment(w, r, "repo_form", f)
@@ -158,7 +166,7 @@ func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	f := repoForm{
-		Name: strings.TrimSpace(r.PostFormValue("name")), Path: strings.TrimSpace(r.PostFormValue("path")),
+		Name: strings.TrimSpace(r.PostFormValue("name")), Location: strings.TrimSpace(r.PostFormValue("path")),
 		BackupCron: strings.Join(strings.Fields(r.PostFormValue("backup_cron")), " "),
 	}
 	password := r.PostFormValue("password")
@@ -181,12 +189,12 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 		f.NameErr = "Give the repository a name."
 		fail(f)
 		return
-	case f.Path == "":
+	case f.Location == "":
 		f.Error = "Enter the folder that holds the repository."
 		fail(f)
 		return
-	case f.BackupCron != "" && !s.explainCron(f.BackupCron).CronOK:
-		f.CronErr = "This is not a valid schedule. Use five fields: minute, hour, day of month, month and weekday."
+	case f.BackupCron != "" && !validSchedule(f.BackupCron):
+		f.CronErr = invalidScheduleMsg
 		fail(f)
 		return
 	case f.ID == 0 && password == "":
@@ -198,7 +206,7 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 	// Check that the repository opens with these settings before saving them.
 	if !force {
 		if err := s.probe(ctx, f, password); err != nil {
-			f.Error = restic.UserMessage(err)
+			f.Error = backend.UserMessage(err)
 			f.CanForce = true
 			fail(f)
 			return
@@ -207,7 +215,7 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 
 	var id int64
 	var err error
-	n := store.NewRepo{Name: f.Name, Path: f.Path, Password: password, BackupCron: f.BackupCron}
+	n := store.NewRepo{Name: f.Name, Location: f.Location, Password: password, BackupCron: f.BackupCron}
 	if f.ID == 0 {
 		id, err = s.Store.CreateRepo(ctx, n, s.Now())
 	} else {
@@ -242,7 +250,7 @@ func (s *Server) probe(ctx context.Context, f repoForm, password string) error {
 		}
 		password = stored
 	}
-	return s.Explorer.Probe(ctx, restic.Repo{Path: f.Path, Password: password})
+	return s.Explorer.Probe(ctx, backend.Ref{Kind: domain.BackendLocal, Location: f.Location, Password: password})
 }
 
 func (s *Server) handleRepoTest(w http.ResponseWriter, r *http.Request) {
@@ -250,13 +258,13 @@ func (s *Server) handleRepoTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rr, err := s.resticRepo(r.Context(), sum.Repo)
+	ref, err := backend.Resolve(r.Context(), s.Store, sum.Repo)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
 	}
-	if err := s.Explorer.Probe(r.Context(), rr); err != nil {
-		sendToast(w, toast{Title: "Cannot open the repository", Sub: restic.UserMessage(err), Fail: true})
+	if err := s.Explorer.Probe(r.Context(), ref); err != nil {
+		sendToast(w, toast{Title: "Cannot open the repository", Sub: backend.UserMessage(err), Fail: true})
 	} else {
 		sendToast(w, toast{Title: "Repository opens", Sub: sum.Repo.Name + " is reachable and the password works.", Done: true})
 	}

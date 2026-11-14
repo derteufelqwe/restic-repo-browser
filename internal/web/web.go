@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"restic-repo-browser/internal/auth"
-	"restic-repo-browser/internal/restic"
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/store"
 	"restic-repo-browser/internal/tasks"
 )
@@ -22,12 +22,12 @@ import (
 var assets embed.FS
 
 // Explorer is the live access to repository contents: the only part of the UI
-// that talks to restic while a request is handled.
+// that talks to the backend while a request is handled.
 type Explorer interface {
-	Probe(ctx context.Context, repo restic.Repo) error
-	List(ctx context.Context, repo restic.Repo, snapshotID, dir string) ([]restic.Node, error)
-	Node(ctx context.Context, repo restic.Repo, snapshotID, path string) (restic.Node, error)
-	Dump(ctx context.Context, repo restic.Repo, snapshotID, path string, asTar bool, w io.Writer) error
+	Probe(ctx context.Context, ref backend.Ref) error
+	List(ctx context.Context, ref backend.Ref, snapshotID, dir string) ([]backend.Node, error)
+	Node(ctx context.Context, ref backend.Ref, snapshotID, path string) (backend.Node, error)
+	Dump(ctx context.Context, ref backend.Ref, snapshotID, path string, asTar bool, w io.Writer) error
 }
 
 // Cache syncs the SQLite copy of repository data. Sync and SyncAll start a

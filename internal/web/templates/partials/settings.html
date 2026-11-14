@@ -4,7 +4,7 @@
     {{if .Error}}<div class="notice error" role="alert"><div><strong>{{.Error}}</strong>{{if .CanForce}}You can still save it, for example when the disk is not plugged in yet.{{end}}</div></div>{{end}}
     <div class="field"><label for="r-name">Name</label><input id="r-name" name="name" type="text" value="{{.Name}}" required>{{with .NameErr}}<span class="hint" style="color:var(--carmine)">{{.}}</span>{{end}}</div>
     <div class="field"><label for="r-path">Path</label>
-      <div class="input-row"><input id="r-path" name="path" class="mono" type="text" placeholder="/mnt/backup/my-repo" value="{{.Path}}" required>
+      <div class="input-row"><input id="r-path" name="path" class="mono" type="text" placeholder="/mnt/backup/my-repo" value="{{.Location}}" required>
         <button type="button" class="btn" hx-get="/fs" hx-include="#r-path" hx-target="#fs-picker" hx-swap="outerHTML" hx-indicator="this">Browse…</button></div>
       <span class="hint">Folder on this server that holds the restic repository.</span>
       <div id="fs-picker"></div></div>

@@ -11,7 +11,6 @@ import (
 	"restic-repo-browser/internal/format"
 	"restic-repo-browser/internal/jobs"
 	"restic-repo-browser/internal/retention"
-	"restic-repo-browser/internal/schedule"
 )
 
 const runsShown = 8
@@ -189,8 +188,8 @@ func jobFromForm(r *http.Request, repoID int64) (domain.Job, map[string]string) 
 		},
 		Prune: r.PostFormValue("prune") != "", Enabled: r.PostFormValue("enabled") != "",
 	}
-	if _, err := schedule.Parse(j.Cron); err != nil {
-		errs["cron"] = "This is not a valid schedule. Use five fields: minute, hour, day of month, month and weekday."
+	if !validSchedule(j.Cron) {
+		errs["cron"] = invalidScheduleMsg
 	}
 	if j.Keep.Empty() {
 		errs["keep"] = "Add at least one keep rule. A job without keep rules would forget every snapshot."
@@ -266,13 +265,8 @@ func (s *Server) buildPreview(sum domain.Summary, job domain.Job, errs map[strin
 	if errs == nil {
 		p.Errors = map[string]string{}
 	}
-	if sch, err := schedule.Parse(job.Cron); err == nil {
-		p.CronOK = true
-		p.CronEcho = sch.Describe()
-		for _, t := range sch.NextRuns(s.Now(), 3) {
-			p.NextRuns = append(p.NextRuns, format.Run(t))
-		}
-	}
+	echo := s.explainCron(job.Cron)
+	p.CronOK, p.CronEcho, p.NextRuns = echo.CronOK, echo.CronEcho, echo.NextRuns
 	p.NoRule = job.Keep.Empty()
 	p.SaveBlocked = p.NoRule || !p.CronOK
 	switch {

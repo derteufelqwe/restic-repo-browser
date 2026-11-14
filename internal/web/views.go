@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/schedule"
 	"restic-repo-browser/internal/store"
 )
@@ -128,15 +128,6 @@ func (s *Server) repoFromPath(w http.ResponseWriter, r *http.Request) (domain.Su
 	return sum, true
 }
 
-// resticRepo returns the credentials restic needs for a repository.
-func (s *Server) resticRepo(ctx context.Context, repo domain.Repo) (restic.Repo, error) {
-	pw, err := s.Store.RepoPassword(ctx, repo.ID)
-	if err != nil {
-		return restic.Repo{}, err
-	}
-	return restic.Repo{Path: repo.Path, Password: pw}, nil
-}
-
 // jobView adds schedule information to a cleanup job.
 type jobView struct {
 	domain.Job
@@ -155,7 +146,7 @@ func newJobView(j domain.Job, now time.Time) jobView {
 	return v
 }
 
-// statusText summarises the job state for display: "Active", "Paused" or "Failing".
+// StatusText summarises the job state for display: "Active", "Paused" or "Failing".
 func (v jobView) StatusText(last *domain.Run) string {
 	switch {
 	case !v.Enabled:
@@ -184,9 +175,5 @@ func keepText(k domain.KeepPolicy) string {
 	if len(parts) == 0 {
 		return "Keeps everything"
 	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += ", " + p
-	}
-	return out
+	return strings.Join(parts, ", ")
 }

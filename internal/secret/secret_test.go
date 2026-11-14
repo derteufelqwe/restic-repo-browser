@@ -22,6 +22,16 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil || string(plain) != "hunter2" {
 		t.Fatalf("Open = %q, %v", plain, err)
 	}
+
+	// Short and tampered values are rejected.
+	if _, err := box.Open([]byte("short")); err == nil {
+		t.Error("expected error for short input")
+	}
+	sealed, _ = box.Seal([]byte("x"))
+	sealed[len(sealed)-1] ^= 0xff
+	if _, err := box.Open(sealed); err == nil {
+		t.Error("expected error for tampered input")
+	}
 }
 
 func TestKeyIsPersisted(t *testing.T) {
@@ -37,17 +47,5 @@ func TestKeyIsPersisted(t *testing.T) {
 	}
 	if _, err := second.Open(sealed); err != nil {
 		t.Fatalf("second box cannot open value of the first: %v", err)
-	}
-}
-
-func TestOpenRejectsGarbage(t *testing.T) {
-	box, _ := NewBox(bytes.Repeat([]byte{1}, 32))
-	if _, err := box.Open([]byte("short")); err == nil {
-		t.Error("expected error for short input")
-	}
-	sealed, _ := box.Seal([]byte("x"))
-	sealed[len(sealed)-1] ^= 0xff
-	if _, err := box.Open(sealed); err == nil {
-		t.Error("expected error for tampered input")
 	}
 }

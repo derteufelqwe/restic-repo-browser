@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,38 +36,54 @@ func i64(v int64) *int64 { return &v }
 
 func TestRepoLifecycle(t *testing.T) {
 	s := open(t)
-	id, err := s.CreateRepo(ctx, NewRepo{Name: "photos", Path: "/mnt/photos", Password: "pw"}, t0)
+	id, err := s.CreateRepo(ctx, NewRepo{Name: "photos", Location: "/mnt/photos", Password: "pw"}, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateRepo(ctx, NewRepo{Name: "photos", Path: "/x", Password: "x"}, t0); !errors.Is(err, ErrDuplicate) {
+	if _, err := s.CreateRepo(ctx, NewRepo{Name: "photos", Location: "/x", Password: "x"}, t0); !errors.Is(err, ErrDuplicate) {
 		t.Errorf("duplicate name: err = %v", err)
 	}
 	if pw, _ := s.RepoPassword(ctx, id); pw != "pw" {
 		t.Errorf("password = %q", pw)
 	}
-	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Path: "/mnt/pics"}); err != nil {
+	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Location: "/mnt/pics"}); err != nil {
 		t.Fatal(err)
 	}
 	if pw, _ := s.RepoPassword(ctx, id); pw != "pw" {
 		t.Errorf("empty password in update must keep the old one, got %q", pw)
 	}
-	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Path: "/mnt/pics", Password: "new"}); err != nil {
+	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Location: "/mnt/pics", Password: "new"}); err != nil {
 		t.Fatal(err)
 	}
 	if pw, _ := s.RepoPassword(ctx, id); pw != "new" {
 		t.Errorf("password = %q", pw)
 	}
 	r, err := s.Repo(ctx, id)
-	if err != nil || r.Name != "pics" || r.Path != "/mnt/pics" || r.BackupCron != "" {
+	if err != nil || r.Name != "pics" || r.Location != "/mnt/pics" || r.BackupCron != "" {
 		t.Fatalf("repo = %+v, %v", r, err)
 	}
-	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Path: "/mnt/pics", BackupCron: "0 3 * * 0"}); err != nil {
+	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Location: "/mnt/pics", BackupCron: "0 3 * * 0"}); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ := s.Repo(ctx, id); r.BackupCron != "0 3 * * 0" {
 		t.Errorf("backup schedule = %q", r.BackupCron)
 	}
+	if r.Backend != domain.BackendLocal {
+		t.Errorf("backend kind = %q, want local by default", r.Backend)
+	}
+
+	// A failed refresh keeps the last known size and success time.
+	if err := s.SaveRefresh(ctx, id, RefreshResult{At: t0, Size: 500}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRefresh(ctx, id, RefreshResult{At: t0.Add(time.Hour), Err: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = s.Repo(ctx, id)
+	if r.SizeBytes != 500 || r.RefreshError != "boom" || !r.RefreshOKAt.Equal(t0) || !r.RefreshedAt.Equal(t0.Add(time.Hour)) {
+		t.Errorf("repo after failed refresh = %+v", r)
+	}
+
 	if err := s.DeleteRepo(ctx, id); err != nil {
 		t.Fatal(err)
 	}
@@ -75,24 +92,9 @@ func TestRepoLifecycle(t *testing.T) {
 	}
 }
 
-func TestRefreshKeepsSizeOnFailure(t *testing.T) {
-	s := open(t)
-	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Path: "/r", Password: "p"}, t0)
-	if err := s.SaveRefresh(ctx, id, RefreshResult{At: t0, Size: 500}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SaveRefresh(ctx, id, RefreshResult{At: t0.Add(time.Hour), Err: "boom"}); err != nil {
-		t.Fatal(err)
-	}
-	r, _ := s.Repo(ctx, id)
-	if r.SizeBytes != 500 || r.RefreshError != "boom" || !r.RefreshOKAt.Equal(t0) || !r.RefreshedAt.Equal(t0.Add(time.Hour)) {
-		t.Errorf("repo after failed refresh = %+v", r)
-	}
-}
-
 func TestSyncSnapshots(t *testing.T) {
 	s := open(t)
-	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Path: "/r", Password: "p"}, t0)
+	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Location: "/r", Password: "p"}, t0)
 	a := domain.Snapshot{ID: "aaa", ShortID: "aa", Time: t0, Host: "h", Paths: []string{"/p"}, Tags: []string{"x"}, Size: i64(10), Added: i64(5), Files: i64(2)}
 	b := domain.Snapshot{ID: "bbb", ShortID: "bb", Time: t0.Add(time.Hour), Host: "h", Paths: []string{"/p"}}
 	if err := s.SyncSnapshots(ctx, id, []domain.Snapshot{a, b}); err != nil {
@@ -121,27 +123,22 @@ func TestSyncSnapshots(t *testing.T) {
 	if got[1].ID != "ccc" || got[1].Added != nil || got[1].Host != "h2" {
 		t.Errorf("snapshot c = %+v", got[1])
 	}
-}
 
-func TestLocks(t *testing.T) {
-	s := open(t)
-	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Path: "/r", Password: "p"}, t0)
-	if err := s.ReplaceLocks(ctx, id, []domain.Lock{{ID: "l1", Time: t0, Host: "docker-01", Username: "root", PID: 7, Exclusive: true}}); err != nil {
+	if err := s.ReplaceLocks(ctx, id, []domain.Lock{{ID: "l1", Time: t0, Host: "docker-01", PID: 7, Exclusive: true}}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := s.Locks(ctx, id)
-	if len(got) != 1 || !got[0].Exclusive || got[0].Host != "docker-01" {
-		t.Fatalf("locks = %+v", got)
+	if locks, _ := s.Locks(ctx, id); len(locks) != 1 || !locks[0].Exclusive || locks[0].Host != "docker-01" {
+		t.Errorf("locks = %+v", locks)
 	}
 	_ = s.ReplaceLocks(ctx, id, nil)
-	if got, _ := s.Locks(ctx, id); len(got) != 0 {
-		t.Errorf("locks not cleared: %+v", got)
+	if locks, _ := s.Locks(ctx, id); len(locks) != 0 {
+		t.Errorf("locks not cleared: %+v", locks)
 	}
 }
 
 func TestJobAndRuns(t *testing.T) {
 	s := open(t)
-	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Path: "/r", Password: "p"}, t0)
+	id, _ := s.CreateRepo(ctx, NewRepo{Name: "r", Location: "/r", Password: "p"}, t0)
 	if j, err := s.Job(ctx, id); j != nil || err != nil {
 		t.Fatalf("job before save = %v, %v", j, err)
 	}
@@ -188,7 +185,7 @@ func TestJobAndRuns(t *testing.T) {
 	}
 }
 
-func TestAuthAndSessions(t *testing.T) {
+func TestAuthSessionsAndSettings(t *testing.T) {
 	s := open(t)
 	if _, ok, _ := s.PasswordHash(ctx); ok {
 		t.Fatal("no password expected initially")
@@ -212,27 +209,32 @@ func TestAuthAndSessions(t *testing.T) {
 	if ok, _ := s.SessionValid(ctx, "tok", t0.Add(time.Minute)); ok {
 		t.Error("changing the password must end all sessions")
 	}
-}
 
-func TestSettings(t *testing.T) {
-	s := open(t)
 	if v, _ := s.Setting(ctx, SettingCacheRefreshTime, "03:00"); v != "03:00" {
-		t.Errorf("default = %q", v)
+		t.Errorf("default setting = %q", v)
 	}
 	_ = s.SetSetting(ctx, SettingCacheRefreshTime, "04:30")
 	_ = s.SetSetting(ctx, SettingCacheRefreshTime, "05:15")
 	if v, _ := s.Setting(ctx, SettingCacheRefreshTime, "03:00"); v != "05:15" {
-		t.Errorf("value = %q", v)
+		t.Errorf("setting = %q", v)
 	}
 }
 
-func TestMigrationsAreIdempotent(t *testing.T) {
+func TestMigrations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "m.db")
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 2; i++ { // opening twice must not fail
 		s, err := Open(ctx, path, xorCipher{})
 		if err != nil {
 			t.Fatalf("open #%d: %v", i, err)
 		}
+		if i == 1 { // pretend the file comes from a newer version
+			if _, err := s.db.ExecContext(ctx, "PRAGMA user_version = 99"); err != nil {
+				t.Fatal(err)
+			}
+		}
 		s.Close()
+	}
+	if _, err := Open(ctx, path, xorCipher{}); err == nil || !strings.Contains(err.Error(), "schema version 99") {
+		t.Errorf("a database from a newer version must be refused, err = %v", err)
 	}
 }

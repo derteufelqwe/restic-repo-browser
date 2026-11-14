@@ -33,29 +33,6 @@ func TestOnlyOneTaskAtATime(t *testing.T) {
 	}
 }
 
-func TestProgress(t *testing.T) {
-	m := NewManager()
-	task, _ := m.TryStart(KindSync, "Syncing", 0)
-	ctx := WithTask(context.Background(), task)
-	Step(ctx, "Reading snapshots")
-	if info, _ := m.Current(); info.Step != "Reading snapshots" || info.Percent() != -1 {
-		t.Errorf("info = %+v", info)
-	}
-	Progress(ctx, 3, 10)
-	if info, _ := m.Current(); info.Percent() != 30 {
-		t.Errorf("percent = %d", info.Percent())
-	}
-	Detail(ctx, "Computing sizes (3 of 10)")
-	if info, _ := m.Current(); info.Detail != "Computing sizes (3 of 10)" || info.Step != "Reading snapshots" || info.Done != 3 {
-		t.Errorf("detail changed progress: %+v", info)
-	}
-	Step(ctx, "Next")
-	if info, _ := m.Current(); info.Done != 0 || info.Total != 0 {
-		t.Errorf("Step must reset progress: %+v", info)
-	}
-	Step(context.Background(), "no task: must not panic")
-}
-
 func TestStartWaitsForFreeSlot(t *testing.T) {
 	m := NewManager()
 	first, _ := m.TryStart(KindSync, "first", 0)

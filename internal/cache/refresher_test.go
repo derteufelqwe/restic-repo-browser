@@ -5,14 +5,12 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/store"
 	"restic-repo-browser/internal/tasks"
 )
@@ -64,59 +62,53 @@ func (f *fakeStore) SaveRefresh(_ context.Context, _ int64, r store.RefreshResul
 }
 func (f *fakeStore) Setting(context.Context, string, string) (string, error) { return f.setting, nil }
 
-type fakeRestic struct {
-	snaps    []restic.Snapshot
-	err      error
-	statsFor []string
-	onStats  func()
-	gate     chan struct{} // when set, Snapshots blocks until it is closed
+type fakeBackend struct {
+	snaps   []domain.Snapshot
+	err     error
+	sizeFor []string
+	gate    chan struct{} // when set, Snapshots blocks until it is closed
 }
 
-func (f *fakeRestic) Snapshots(context.Context, restic.Repo) ([]restic.Snapshot, error) {
+func (f *fakeBackend) Snapshots(context.Context, backend.Ref) ([]domain.Snapshot, error) {
 	if f.gate != nil {
 		<-f.gate
 	}
 	return f.snaps, f.err
 }
-func (f *fakeRestic) SnapshotStats(_ context.Context, _ restic.Repo, id string) (restic.Stats, error) {
-	f.statsFor = append(f.statsFor, id)
-	if f.onStats != nil {
-		f.onStats()
-	}
-	return restic.Stats{TotalSize: 777, TotalFileCount: 3}, nil
+func (f *fakeBackend) SnapshotSize(_ context.Context, _ backend.Ref, id string) (backend.SnapshotSize, error) {
+	f.sizeFor = append(f.sizeFor, id)
+	return backend.SnapshotSize{Bytes: 777, Files: 3}, nil
 }
-func (f *fakeRestic) Locks(context.Context, restic.Repo) ([]restic.Lock, error) {
-	return []restic.Lock{{ID: "l1", Hostname: "docker-01", Exclusive: true}}, nil
+func (f *fakeBackend) Locks(context.Context, backend.Ref) ([]domain.Lock, error) {
+	return []domain.Lock{{ID: "l1", Host: "docker-01", Exclusive: true}}, nil
+}
+func (f *fakeBackend) RepoSize(context.Context, backend.Ref) (int64, error) { return 1234, nil }
+
+func newRefresher(st *fakeStore, be *fakeBackend) (*Refresher, *tasks.Manager) {
+	tm := tasks.NewManager()
+	return New(st, be, tm, slog.New(slog.NewTextHandler(io.Discard, nil))), tm
 }
 
-func newRefresher(st *fakeStore, rc *fakeRestic) (*Refresher, *tasks.Manager) {
-	tm := tasks.NewManager()
-	return New(st, rc, tm, slog.New(slog.NewTextHandler(io.Discard, nil))), tm
-}
+var notFound = &backend.Error{Kind: backend.KindNotFound}
+
+func i64(v int64) *int64 { return &v }
 
 func TestRefreshStoresEverything(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "data"), make([]byte, 1234), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Path: dir}}
-	rc := &fakeRestic{snaps: []restic.Snapshot{
-		{ID: "new", ShortID: "n", Hostname: "h", Summary: &restic.Summary{DataAdded: 5, TotalBytesProcessed: 50, TotalFilesProcessed: 2}},
-		{ID: "old", ShortID: "o", Hostname: "h"}, // made by restic < 0.17: no summary
+	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Backend: domain.BackendLocal, Location: "/r"}}
+	be := &fakeBackend{snaps: []domain.Snapshot{
+		{ID: "new", ShortID: "n", Host: "h", Size: i64(50), Added: i64(5), Files: i64(2)},
+		{ID: "old", ShortID: "o", Host: "h"}, // made by restic < 0.17: no summary
 	}}
-	r, _ := newRefresher(st, rc)
+	r, _ := newRefresher(st, be)
 
 	if err := r.Refresh(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	if len(st.snaps) != 2 || st.snaps[0].SizeBytes() != 50 || st.snaps[0].AddedBytes() != 5 || st.snaps[0].FileCount() != 2 {
+	if len(st.snaps) != 2 || st.snaps[0].SizeBytes() != 50 {
 		t.Errorf("snapshots = %+v", st.snaps)
 	}
-	if st.snaps[1].Size != nil {
-		t.Error("snapshot without summary must stay without size until stats ran")
-	}
-	if len(rc.statsFor) != 1 || rc.statsFor[0] != "old" || st.sizes["old"] != 777 {
-		t.Errorf("stats calls = %v, sizes = %v", rc.statsFor, st.sizes)
+	if len(be.sizeFor) != 1 || be.sizeFor[0] != "old" || st.sizes["old"] != 777 {
+		t.Errorf("size calls = %v, sizes = %v", be.sizeFor, st.sizes)
 	}
 	if len(st.locks) != 1 || st.locks[0].Host != "docker-01" || !st.locks[0].Exclusive {
 		t.Errorf("locks = %+v", st.locks)
@@ -126,56 +118,40 @@ func TestRefreshStoresEverything(t *testing.T) {
 	}
 
 	// A second refresh must not recompute the already known size.
-	rc.statsFor = nil
+	be.sizeFor = nil
 	if err := r.Refresh(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	if len(rc.statsFor) != 0 {
-		t.Errorf("stats recomputed: %v", rc.statsFor)
+	if len(be.sizeFor) != 0 {
+		t.Errorf("size recomputed: %v", be.sizeFor)
 	}
 }
 
-func TestRefreshReportsProgress(t *testing.T) {
-	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "photos", Path: t.TempDir()}}
-	rc := &fakeRestic{snaps: []restic.Snapshot{{ID: "a"}, {ID: "b"}}}
-	r, tm := newRefresher(st, rc)
-	task, _ := tm.TryStart(tasks.KindSync, "Syncing photos", 1)
-	rc.onStats = func() { // runs while the sizes of the two snapshots are computed
-		if info := task.Info(); !strings.HasPrefix(info.Detail, "photos: computing snapshot sizes") {
-			t.Errorf("detail during stats = %q", info.Detail)
-		}
-	}
-	if err := r.Refresh(tasks.WithTask(context.Background(), task), 1); err != nil {
-		t.Fatal(err)
-	}
-	if info := task.Info(); info.Detail != "photos: measuring the repository size" {
-		t.Errorf("final detail = %q", info.Detail)
-	}
-	task.Finish(nil)
-}
+func TestFailedRefreshKeepsCachedSnapshotsAndSyncAllReportsIt(t *testing.T) {
+	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Location: "/r"}, snaps: []domain.Snapshot{{ID: "cached"}}}
+	r, tm := newRefresher(st, &fakeBackend{err: notFound})
 
-func TestFailedRefreshKeepsCachedSnapshots(t *testing.T) {
-	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Path: t.TempDir()}, snaps: []domain.Snapshot{{ID: "cached"}}}
-	rc := &fakeRestic{err: &restic.Error{Kind: restic.KindNotFound, Code: 10}}
-	r, _ := newRefresher(st, rc)
-
-	err := r.Refresh(context.Background(), 1)
-	if !errors.Is(err, restic.ErrNotFound) {
+	if err := r.Refresh(context.Background(), 1); !errors.Is(err, backend.ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(st.snaps) != 1 || st.snaps[0].ID != "cached" {
 		t.Errorf("cached snapshots were touched: %+v", st.snaps)
 	}
-	if st.refresh.Err != "No restic repository found at this path." {
+	if st.refresh.Err != backend.UserMessage(notFound) {
 		t.Errorf("stored error = %q", st.refresh.Err)
+	}
+
+	task, _ := tm.TryStart(tasks.KindSync, "Syncing all repositories", 0)
+	r.syncAll(context.Background(), task)
+	if last := tm.Last(); last == nil || !strings.Contains(last.Err, "1 of 1 repositories could not be read") {
+		t.Errorf("last = %+v", last)
 	}
 }
 
 func TestSyncOnlyOneAtATime(t *testing.T) {
-	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Path: t.TempDir(), RefreshedAt: time.Now()}}
+	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Location: "/r", RefreshedAt: time.Now()}}
 	gate := make(chan struct{})
-	rc := &fakeRestic{snaps: []restic.Snapshot{{ID: "a"}}, gate: gate}
-	r, tm := newRefresher(st, rc)
+	r, tm := newRefresher(st, &fakeBackend{snaps: []domain.Snapshot{{ID: "a"}}, gate: gate})
 
 	if err := r.Sync(1); !errors.Is(err, ErrNotStarted) {
 		t.Fatalf("before Run: %v", err)
@@ -204,20 +180,9 @@ func TestSyncOnlyOneAtATime(t *testing.T) {
 	<-finished
 }
 
-func TestSyncAllVisitsEveryRepoAndReportsFailures(t *testing.T) {
-	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Path: t.TempDir()}}
-	rc := &fakeRestic{err: &restic.Error{Kind: restic.KindNotFound, Code: 10}}
-	r, tm := newRefresher(st, rc)
-	task, _ := tm.TryStart(tasks.KindSync, "Syncing all repositories", 0)
-	r.syncAll(context.Background(), task)
-	if last := tm.Last(); last == nil || !strings.Contains(last.Err, "1 of 1 repositories could not be read") {
-		t.Errorf("last = %+v", last)
-	}
-}
-
 func TestStartupSyncWhenCacheIsStale(t *testing.T) {
-	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Path: t.TempDir()}, setting: "03:00"} // never refreshed
-	r, tm := newRefresher(st, &fakeRestic{})
+	st := &fakeStore{repo: domain.Repo{ID: 1, Name: "r", Location: "/r"}, setting: "03:00"} // never refreshed
+	r, tm := newRefresher(st, &fakeBackend{})
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
 	go func() { r.Run(ctx); close(finished) }()

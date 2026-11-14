@@ -66,6 +66,14 @@ func TestLoginAndSession(t *testing.T) {
 	if s.Valid(ctx, token) {
 		t.Error("session should be gone after logout")
 	}
+
+	token, _, _ = s.Login(ctx, "correct horse", "1.2.3.4")
+	if err := s.SetPassword(ctx, "another password"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Valid(ctx, token) {
+		t.Error("old session survived a password change")
+	}
 }
 
 func TestWrongPasswordAndNotConfigured(t *testing.T) {
@@ -99,15 +107,7 @@ func TestThrottle(t *testing.T) {
 	if _, _, err := s.Login(ctx, "correct horse", "ip"); err != nil {
 		t.Errorf("after the lockout: %v", err)
 	}
-}
-
-func TestChangingPasswordEndsSessions(t *testing.T) {
-	s, _, _ := newService(t)
-	token, _, _ := s.Login(ctx, "correct horse", "ip")
-	if err := s.SetPassword(ctx, "another password"); err != nil {
-		t.Fatal(err)
-	}
-	if s.Valid(ctx, token) {
-		t.Error("old session survived a password change")
+	if _, _, err := s.Login(ctx, "bad", "other-ip"); !errors.Is(err, ErrInvalidPassword) || len(s.failures) != 1 {
+		t.Errorf("stale failures must be forgotten: %v, %d entries", err, len(s.failures))
 	}
 }

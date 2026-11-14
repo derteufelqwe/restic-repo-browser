@@ -54,6 +54,7 @@ type Service struct {
 
 type failure struct {
 	count int
+	last  time.Time // the latest wrong password; failures older than the lockout are forgotten
 	until time.Time // once count reached maxFailures: no attempts before this
 }
 
@@ -147,14 +148,21 @@ func (s *Service) checkThrottle(key string) error {
 func (s *Service) recordFailure(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.now()
+	for k, f := range s.failures { // keeps the map from growing with every client that ever failed
+		if now.Sub(f.last) > lockout && now.After(f.until) {
+			delete(s.failures, k)
+		}
+	}
 	f := s.failures[key]
 	if f == nil {
 		f = &failure{}
 		s.failures[key] = f
 	}
 	f.count++
+	f.last = now
 	if f.count >= maxFailures {
-		f.until = s.now().Add(lockout)
+		f.until = now.Add(lockout)
 	}
 }
 

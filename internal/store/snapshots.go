@@ -113,7 +113,7 @@ func (s *Store) SnapshotsWithoutSize(ctx context.Context, repoID int64) ([]strin
 	return ids, rows.Err()
 }
 
-// SetSnapshotSize records a size computed separately (restic stats).
+// SetSnapshotSize records a size computed separately by the backend.
 func (s *Store) SetSnapshotSize(ctx context.Context, repoID int64, id string, size, files int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE snapshots SET size_bytes = ?, files = ? WHERE repo_id = ? AND id = ?`, size, files, repoID, id)

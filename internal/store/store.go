@@ -84,11 +84,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
 		return fmt.Errorf("store: read schema version: %w", err)
 	}
+	latest := 0
 	for _, name := range names {
 		version, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
 		if err != nil {
 			return fmt.Errorf("store: migration %q has no numeric prefix", name)
 		}
+		latest = max(latest, version)
 		if version <= current {
 			continue
 		}
@@ -106,6 +108,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("store: apply migration %s: %w", name, err)
 		}
+	}
+	if current > latest {
+		return fmt.Errorf("store: the database has schema version %d but this program only knows up to %d; "+
+			"it was made by a different version, so move or delete it to start fresh", current, latest)
 	}
 	return nil
 }

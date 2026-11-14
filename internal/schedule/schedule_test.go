@@ -15,26 +15,12 @@ func TestParseRejectsInvalid(t *testing.T) {
 
 func TestDescribe(t *testing.T) {
 	cases := map[string]string{
-		"30 3 * * *":   "Every day at 03:30",
-		"0 4 * * 0":    "Every Sunday at 04:00",
-		"0 5 1 * *":    "On day 1 of every month at 05:00",
-		"0 6 1 */3 *":  "On day 1, every 3 months, at 06:00",
-		"15 * * * *":   "Every hour at 15 minutes past",
-		"*/10 * * * *": "Every 10 minutes",
-	}
-	for spec, want := range cases {
-		s, err := Parse(spec)
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", spec, err)
-		}
-		if got := s.Describe(); got != want {
-			t.Errorf("Describe(%q) = %q, want %q", spec, got, want)
-		}
-	}
-}
-
-func TestDescribeGeneral(t *testing.T) {
-	cases := map[string]string{
+		"30 3 * * *":        "Every day at 03:30",
+		"0 4 * * 0":         "Every Sunday at 04:00",
+		"0 5 1 * *":         "On day 1 of every month at 05:00",
+		"0 6 1 */3 *":       "On day 1, every 3 months, at 06:00",
+		"15 * * * *":        "Every hour at 15 minutes past",
+		"*/10 * * * *":      "Every 10 minutes",
 		"0 3 * * 1-5":       "At 03:00, on Monday through Friday",
 		"*/15 9-17 * * 1-5": "Every 15 minutes, between 09:00 and 17:59, on Monday through Friday",
 		"0 */6 * * *":       "At minute 0 past every 6th hour",

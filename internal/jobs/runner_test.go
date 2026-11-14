@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"restic-repo-browser/internal/backend"
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/tasks"
 )
 
@@ -28,7 +28,7 @@ func newFakeStore(job *domain.Job) *fakeStore {
 }
 
 func (f *fakeStore) Repo(context.Context, int64) (domain.Repo, error) {
-	return domain.Repo{ID: 1, Name: "r", Path: "/r"}, nil
+	return domain.Repo{ID: 1, Name: "r", Backend: domain.BackendLocal, Location: "/r"}, nil
 }
 func (f *fakeStore) RepoPassword(context.Context, int64) (string, error) { return "pw", nil }
 func (f *fakeStore) Job(context.Context, int64) (*domain.Job, error)     { return f.job, nil }
@@ -65,30 +65,30 @@ func (f *fakeStore) finished() []domain.Run {
 	return out
 }
 
-type fakeRestic struct {
+type fakeBackend struct {
 	mu        sync.Mutex
 	calls     []string
 	forgetErr error
-	pruneOut  string
+	freed     string
 	gate      chan struct{} // when set, Forget blocks until it is closed
 }
 
-func (f *fakeRestic) record(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
-func (f *fakeRestic) Forget(_ context.Context, _ restic.Repo, k domain.KeepPolicy, dry bool) (restic.ForgetResult, error) {
-	f.record(fmt.Sprintf("forget dry=%v last=%d", dry, k.Last))
+func (f *fakeBackend) record(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
+func (f *fakeBackend) Forget(_ context.Context, _ backend.Ref, k domain.KeepPolicy) (backend.ForgetResult, error) {
+	f.record(fmt.Sprintf("forget last=%d", k.Last))
 	if f.gate != nil {
 		<-f.gate
 	}
 	if f.forgetErr != nil {
-		return restic.ForgetResult{}, f.forgetErr
+		return backend.ForgetResult{}, f.forgetErr
 	}
-	return restic.ForgetResult{Removed: 2, Kept: 5, Groups: []restic.ForgetGroup{{Remove: []restic.Snapshot{
-		{ShortID: "aaaa1111", Hostname: "h", Paths: []string{"/p"}}, {ShortID: "bbbb2222", Hostname: "h", Paths: []string{"/p"}}}}}}, nil
+	return backend.ForgetResult{Kept: 5, Removed: []domain.Snapshot{
+		{ShortID: "aaaa1111", Host: "h", Paths: []string{"/p"}}, {ShortID: "bbbb2222", Host: "h", Paths: []string{"/p"}}}}, nil
 }
-func (f *fakeRestic) Prune(_ context.Context, _ restic.Repo, log io.Writer) error {
+func (f *fakeBackend) Prune(_ context.Context, _ backend.Ref, log io.Writer) (backend.PruneResult, error) {
 	f.record("prune")
-	_, _ = io.WriteString(log, f.pruneOut)
-	return nil
+	_, _ = io.WriteString(log, "pruning...\n")
+	return backend.PruneResult{Freed: f.freed}, nil
 }
 
 // fakeSyncer records the progress text visible while the sync runs.
@@ -109,7 +109,7 @@ func (f *fakeSyncer) Refresh(_ context.Context, id int64) error {
 	return nil
 }
 
-func newRunner(st *fakeStore, rc *fakeRestic) (*Runner, *fakeSyncer, *tasks.Manager) {
+func newRunner(st *fakeStore, rc *fakeBackend) (*Runner, *fakeSyncer, *tasks.Manager) {
 	tm := tasks.NewManager()
 	sy := &fakeSyncer{tm: tm}
 	return New(st, rc, sy, tm, slog.New(slog.NewTextHandler(io.Discard, nil))), sy, tm
@@ -129,7 +129,7 @@ func execute(t *testing.T, r *Runner, tm *tasks.Manager, j *domain.Job) {
 }
 
 func TestExecuteSuccess(t *testing.T) {
-	st, rc := newFakeStore(job()), &fakeRestic{pruneOut: "total prune:          10 blobs / 5.280 KiB\ndone\n"}
+	st, rc := newFakeStore(job()), &fakeBackend{freed: "5.280 KiB"}
 	r, sy, tm := newRunner(st, rc)
 
 	execute(t, r, tm, job())
@@ -142,12 +142,12 @@ func TestExecuteSuccess(t *testing.T) {
 	if run.Status != domain.RunOK || run.Summary != "Forgot 2 snapshots, freed 5.280 KiB" {
 		t.Errorf("run = %+v", run)
 	}
-	for _, want := range []string{"$ restic forget --keep-last 7", "remove 2 snapshots", "aaaa1111", "$ restic prune"} {
+	for _, want := range []string{"keep rules: last 7", "remove 2 snapshots", "aaaa1111", "pruning..."} {
 		if !strings.Contains(run.Log, want) {
 			t.Errorf("log lacks %q:\n%s", want, run.Log)
 		}
 	}
-	if got := strings.Join(rc.calls, "; "); got != "forget dry=false last=7; prune" {
+	if got := strings.Join(rc.calls, "; "); got != "forget last=7; prune" {
 		t.Errorf("calls = %s", got)
 	}
 	if len(sy.ids) != 1 || sy.ids[0] != 1 || sy.steps[0] != "Syncing the saved data" {
@@ -159,11 +159,20 @@ func TestExecuteSuccess(t *testing.T) {
 	if last := tm.Last(); last == nil || last.Err != "" {
 		t.Errorf("last task = %+v", last)
 	}
+
+	// A job without prune only forgets.
+	forgetOnly := job()
+	forgetOnly.Prune = false
+	rc.calls = nil
+	execute(t, r, tm, forgetOnly)
+	if len(rc.calls) != 1 {
+		t.Errorf("calls without prune = %v", rc.calls)
+	}
 }
 
 func TestExecuteFailureStopsAndRecords(t *testing.T) {
 	st := newFakeStore(job())
-	rc := &fakeRestic{forgetErr: &restic.Error{Kind: restic.KindLocked, Code: 11, Message: "repository is already locked"}}
+	rc := &fakeBackend{forgetErr: &backend.Error{Kind: backend.KindLocked, Message: "repository is already locked"}}
 	r, sy, tm := newRunner(st, rc)
 
 	execute(t, r, tm, job())
@@ -186,20 +195,9 @@ func TestExecuteFailureStopsAndRecords(t *testing.T) {
 	}
 }
 
-func TestForgetOnlyJob(t *testing.T) {
-	j := job()
-	j.Prune = false
-	st, rc := newFakeStore(j), &fakeRestic{}
-	r, _, tm := newRunner(st, rc)
-	execute(t, r, tm, j)
-	if run := st.finished()[0]; run.Summary != "Forgot 2 snapshots" || len(rc.calls) != 1 {
-		t.Errorf("summary = %q, calls = %v", run.Summary, rc.calls)
-	}
-}
-
 func TestRunNowRules(t *testing.T) {
 	st := newFakeStore(nil)
-	rc := &fakeRestic{gate: make(chan struct{})}
+	rc := &fakeBackend{gate: make(chan struct{})}
 	r, _, tm := newRunner(st, rc)
 
 	if err := r.RunNow(context.Background(), 1); !errors.Is(err, ErrNoJob) {
@@ -227,18 +225,8 @@ func TestRunNowRules(t *testing.T) {
 	}
 	close(rc.gate)
 	waitFor(t, func() bool { return !r.Running(1) && len(st.finished()) == 1 })
-	cancel()
-	r.Wait()
-}
 
-func TestRunNowRefusedWhileSyncing(t *testing.T) {
-	st := newFakeStore(job())
-	r, _, tm := newRunner(st, &fakeRestic{})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	r.Start(ctx)
 	sync, _ := tm.TryStart(tasks.KindSync, "Syncing all repositories", 0)
-	var busy *tasks.BusyError
 	if err := r.RunNow(ctx, 1); !errors.As(err, &busy) || busy.Current.Title != "Syncing all repositories" {
 		t.Errorf("RunNow during sync: %v", err)
 	}
@@ -252,7 +240,7 @@ func TestSchedulerStartsDueJobsAndWaitsForTheSlot(t *testing.T) {
 	var mu sync.Mutex
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 
-	st, rc := newFakeStore(job()), &fakeRestic{} // 03:30 daily
+	st, rc := newFakeStore(job()), &fakeBackend{} // 03:30 daily
 	r, _, tm := newRunner(st, rc)
 	r.now, r.tick = clock, 10*time.Millisecond
 

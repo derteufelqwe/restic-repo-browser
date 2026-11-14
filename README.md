@@ -77,14 +77,6 @@ Edit the `ExecStart` line first to set the listen address and `--browse-dir`. Th
 to your repositories, and write access if you use cleanup jobs (forget and prune), for example
 `sudo chown -R restic-browser /srv/restic`. After changing the unit run `sudo systemctl daemon-reload && sudo systemctl restart restic-browser`.
 
-## Try it with demo data
-
-```sh
-go run ./tools/mkdemo -out demo -restic ./restic.exe     # builds real restic repos, takes ~1 minute
-./restic-browser --data-dir demo/data --restic ./restic.exe
-# sign in with: demo-password
-```
-
 
 ## Disclaimer
 

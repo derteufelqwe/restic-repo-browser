@@ -10,12 +10,14 @@ import (
 	"restic-repo-browser/internal/domain"
 )
 
-const repoColumns = `id, name, path, created_at, refreshed_at, refresh_ok_at, refresh_error, size_bytes, backup_cron`
+const repoColumns = `id, name, backend, location, created_at, refreshed_at, refresh_ok_at, refresh_error, size_bytes, backup_cron`
 
 func scanRepo(row interface{ Scan(...any) error }) (domain.Repo, error) {
 	var r domain.Repo
 	var created, refreshed, ok int64
-	err := row.Scan(&r.ID, &r.Name, &r.Path, &created, &refreshed, &ok, &r.RefreshError, &r.SizeBytes, &r.BackupCron)
+	var kind string
+	err := row.Scan(&r.ID, &r.Name, &kind, &r.Location, &created, &refreshed, &ok, &r.RefreshError, &r.SizeBytes, &r.BackupCron)
+	r.Backend = domain.BackendKind(kind)
 	r.CreatedAt, r.RefreshedAt, r.RefreshOKAt = fromMillis(created), fromMillis(refreshed), fromMillis(ok)
 	return r, err
 }
@@ -53,7 +55,8 @@ func (s *Store) Repo(ctx context.Context, id int64) (domain.Repo, error) {
 // NewRepo are the user-editable fields of a repository.
 type NewRepo struct {
 	Name       string
-	Path       string
+	Kind       domain.BackendKind // only used when creating; empty means local
+	Location   string
 	Password   string
 	BackupCron string // optional cron expression of when backups are expected
 }
@@ -64,9 +67,12 @@ func (s *Store) CreateRepo(ctx context.Context, n NewRepo, now time.Time) (int64
 	if err != nil {
 		return 0, fmt.Errorf("store: encrypt password: %w", err)
 	}
+	if n.Kind == "" {
+		n.Kind = domain.BackendLocal
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO repos (name, path, password_enc, backup_cron, created_at) VALUES (?, ?, ?, ?, ?)`,
-		n.Name, n.Path, enc, n.BackupCron, toMillis(now))
+		`INSERT INTO repos (name, backend, location, password_enc, backup_cron, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		n.Name, n.Kind, n.Location, enc, n.BackupCron, toMillis(now))
 	if isUniqueViolation(err) {
 		return 0, ErrDuplicate
 	}
@@ -76,10 +82,10 @@ func (s *Store) CreateRepo(ctx context.Context, n NewRepo, now time.Time) (int64
 	return res.LastInsertId()
 }
 
-// UpdateRepo changes name, path and backup schedule, and the password when n.Password is not empty.
+// UpdateRepo changes name, location and backup schedule, and the password when n.Password is not empty.
 func (s *Store) UpdateRepo(ctx context.Context, id int64, n NewRepo) error {
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE repos SET name = ?, path = ?, backup_cron = ? WHERE id = ?`, n.Name, n.Path, n.BackupCron, id)
+		res, err := tx.ExecContext(ctx, `UPDATE repos SET name = ?, location = ?, backup_cron = ? WHERE id = ?`, n.Name, n.Location, n.BackupCron, id)
 		if err != nil {
 			return err
 		}
