@@ -15,7 +15,7 @@
       <td><a class="name" style="font-size:var(--t-sm)" href="/repos/{{.Repo.ID}}#cleanup">{{.Repo.Name}}</a><span class="sub">{{if .Job.Prune}}Forget and prune{{else}}Forget only{{end}}</span></td>
       <td>{{.Job.Describe}}<span class="sub mono">{{.Job.Cron}}</span></td>
       <td>{{with .Last}}<span class="status {{.Status.CSSClass}}"><span class="dot {{.Status.CSSClass}}"></span>{{.Status.Label}}</span><span class="sub">{{rel .StartedAt}}. {{.Summary}}</span>{{else}}<span class="muted">Never run</span>{{end}}</td>
-      <td>{{if .Job.Next.IsZero}}<span class="muted">Paused</span>{{else}}{{future .Job.Next}}<span class="sub">{{runtime .Job.Next}}</span>{{end}}</td>
+      <td>{{if .Job.ReadOnly}}<span class="muted">Never (read-only)</span>{{else if .Job.Next.IsZero}}<span class="muted">Paused</span>{{else}}{{future .Job.Next}}<span class="sub">{{runtime .Job.Next}}</span>{{end}}</td>
     </tr>{{else}}<tr class="is-unreachable"><td><a class="name" style="font-size:var(--t-sm)" href="/repos/{{.Repo.ID}}#cleanup">{{.Repo.Name}}</a></td><td colspan="3"><span class="muted">No cleanup job set up</span></td></tr>{{end}}
     {{else}}<tr><td colspan="4" class="muted">No repositories yet.</td></tr>{{end}}
     </tbody>

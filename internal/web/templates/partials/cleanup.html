@@ -1,4 +1,5 @@
 {{define "cleanup_panel"}}
+{{if .S.Repo.ReadOnly}}<div class="notice warn"><div><strong>Read-only repository</strong>Cleanups cannot be set up or run.{{if .Job}} The saved cleanup job is kept, but it never runs while the repository is read-only.{{end}}</div></div>{{end}}
 {{if not .Reachable}}<div class="notice warn"><div><strong>Cleanup cannot run right now</strong>The repository is unreachable.</div></div>{{end}}
 {{if .FailStreak}}<div class="notice error" role="alert"><div><strong>The last {{.FailStreak}} {{plural .FailStreak "run" "runs"}} failed</strong>{{.S.LastRun.Summary}} Old snapshots are not being removed.</div></div>{{end}}
 <div id="cleanup-body">{{template "cleanup_body" .}}</div>
@@ -12,12 +13,13 @@
 <section class="panel" id="cleanup-view" aria-labelledby="cl-h" data-tab-label="{{.TabLabel}}" data-next-run="{{if .Job.Next.IsZero}}Paused{{else}}{{runtime .Job.Next}}{{end}}">
   <div class="panel-head"><h2 id="cl-h">Cleanup job</h2>
     <div class="head-actions"><span class="small muted" id="cleanup-status">{{.Runs.Status}}</span>
-      <button class="btn sm" type="button" data-needs-idle hx-post="/repos/{{.S.Repo.ID}}/cleanup/run" hx-target="#cleanup-runs" hx-swap="outerHTML" {{if not .Reachable}}disabled data-force-disabled{{end}}>{{template "icon_play"}}Run now</button>
-      <button class="btn sm primary" type="button" hx-get="/repos/{{.S.Repo.ID}}/cleanup/edit" hx-target="#cleanup-body" hx-swap="innerHTML">Edit</button></div></div>
+      {{if not .S.Repo.ReadOnly}}<button class="btn sm" type="button" data-needs-idle hx-post="/repos/{{.S.Repo.ID}}/cleanup/run" hx-target="#cleanup-runs" hx-swap="outerHTML" {{if not .Reachable}}disabled data-force-disabled{{end}}>{{template "icon_play"}}Run now</button>
+      <button class="btn sm primary" type="button" hx-get="/repos/{{.S.Repo.ID}}/cleanup/edit" hx-target="#cleanup-body" hx-swap="innerHTML">Edit</button>{{end}}</div></div>
   <dl class="setting-grid">{{range .Items}}<div><dt>{{.Label}}</dt><dd>{{.Value}}{{if .Sub}}<span class="sub{{if eq .Label "Schedule"}} mono{{end}}">{{.Sub}}</span>{{end}}</dd></div>{{end}}</dl>
 </section>
 {{else}}
-<section class="panel" data-tab-label="Not set up"><div class="empty">{{template "empty_art"}}<div><h3>No cleanup job yet</h3><p>Without one, old snapshots stay forever and the repository keeps growing. Set a schedule and keep rules to thin them out automatically.</p><div class="actions"><button class="btn primary" type="button" hx-get="/repos/{{.S.Repo.ID}}/cleanup/edit" hx-target="#cleanup-body" hx-swap="innerHTML">Set up cleanup</button></div></div></div></section>
+{{if .S.Repo.ReadOnly}}<section class="panel" data-tab-label="Read-only"><div class="empty">{{template "empty_art"}}<div><h3>No cleanup job</h3><p>This repository is read-only, so no cleanup can be set up for it. Remove the read-only mark under Settings to change that.</p></div></div></section>
+{{else}}<section class="panel" data-tab-label="Not set up"><div class="empty">{{template "empty_art"}}<div><h3>No cleanup job yet</h3><p>Without one, old snapshots stay forever and the repository keeps growing. Set a schedule and keep rules to thin them out automatically.</p><div class="actions"><button class="btn primary" type="button" hx-get="/repos/{{.S.Repo.ID}}/cleanup/edit" hx-target="#cleanup-body" hx-swap="innerHTML">Set up cleanup</button></div></div></div></section>{{end}}
 {{end}}{{end}}
 
 {{define "cleanup_runs"}}<div id="cleanup-runs" {{if .Running}}hx-get="/repos/{{.RepoID}}/cleanup/runs" hx-trigger="every 2s" hx-swap="outerHTML"{{end}}>{{template "runs_list" .}}</div>

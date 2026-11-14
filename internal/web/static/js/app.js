@@ -291,6 +291,10 @@
   document.addEventListener('click', (e) => {
     if (e.target.closest('[data-close-dialog]')) { const dlg = $('#repo-dialog'); if (dlg) dlg.close(); }
   });
+  // A dialog opened through /settings?add=1 or ?edit=<id> must not reopen on reload once it is closed.
+  document.addEventListener('close', (e) => {
+    if (e.target.id === 'repo-dialog' && location.search) history.replaceState(null, '', location.pathname);
+  }, true);
 
   /* ---------- cleanup tab ---------- */
 
@@ -359,17 +363,45 @@
     if (e.target.closest('[data-fs-close]')) closePicker();
   });
 
+  // The repository type decides which fields of the dialog apply (CSS shows .only-local / .only-rclone).
+  document.addEventListener('change', (e) => {
+    if (e.target.id !== 'r-kind') return;
+    const form = e.target.form;
+    form.dataset.kind = e.target.value;
+    const input = $('#r-path', form);
+    input.placeholder = e.target.selectedOptions[0].dataset.placeholder || '';
+    closePicker();
+  });
+
   /* ---------- snapshot explorer ---------- */
 
+  const DRAWER_LOADING = '<header><div><h2>Loading…</h2></div><button type="button" class="btn sm quiet" data-close-drawer aria-label="Close details">Close</button></header>' +
+    '<div class="body"><div class="skeleton is-shown" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>';
   function closeDrawer() {
     const dr = $('#drawer');
-    if (dr) { dr.classList.remove('is-open'); dr.setAttribute('aria-hidden', 'true'); }
+    if (dr) { dr.classList.remove('is-open'); dr.setAttribute('aria-hidden', 'true'); delete dr.dataset.pending; }
   }
+  // Clicking a file opens the drawer at once with a placeholder; the details replace it when they arrive.
+  document.body.addEventListener('htmx:beforeRequest', (e) => {
+    const dr = $('#drawer');
+    if (!dr || e.detail.target !== dr) return;
+    dr.innerHTML = DRAWER_LOADING;
+    dr.dataset.pending = '1';
+    dr.classList.add('is-open'); dr.setAttribute('aria-hidden', 'false');
+  });
+  document.body.addEventListener('htmx:afterRequest', (e) => {
+    const dr = $('#drawer');
+    // A failed request (or an empty answer that only carries a toast) leaves nothing to show.
+    if (dr && e.detail.target === dr && (!e.detail.successful || e.detail.xhr.status === 204)) closeDrawer();
+  });
+  // Picture previews: the placeholder box goes away once the image has loaded.
+  document.addEventListener('load', (e) => { if (e.target.matches && e.target.matches('.preview img')) e.target.parentElement.classList.add('is-loaded'); }, true);
+  document.addEventListener('error', (e) => { if (e.target.matches && e.target.matches('.preview img')) e.target.parentElement.classList.add('is-failed'); }, true);
   document.body.addEventListener('htmx:afterSwap', (e) => {
     const t = e.detail.target;
     if (!t) return;
-    if (t.id === 'drawer') {
-      t.classList.add('is-open'); t.setAttribute('aria-hidden', 'false');
+    if (t.id === 'drawer' && t.dataset.pending) { // not when it was closed while loading
+      delete t.dataset.pending;
       const b = $('[data-close-drawer]', t); if (b) b.focus();
     }
     // Only a new folder listing resets the explorer. Other swaps (such as the task

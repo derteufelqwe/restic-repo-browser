@@ -52,7 +52,30 @@ tr[hidden] { display: none; }
 }
 .twist.htmx-request::before { opacity: 0.2; }
 .twist.htmx-request { background: none; animation: pulse 0.9s linear infinite; }
-#listing-pane.htmx-request, #cleanup-preview.htmx-request { opacity: 0.5; transition: opacity 0.15s 0.1s; }
+#cleanup-preview.htmx-request { opacity: 0.5; transition: opacity 0.15s 0.1s; }
+
+/* Loading placeholders: shimmering bars that show the moment a request starts. */
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.skeleton { display: none; padding: var(--sp-3) var(--sp-4); }
+.skeleton.is-shown, #listing-pane.is-loading .skeleton, #listing-pane.htmx-request .skeleton { display: block; }
+.skeleton i, .preview:not(.is-loaded):not(.is-failed) {
+  background: linear-gradient(90deg, var(--line) 25%, rgba(21, 52, 58, 0.04) 50%, var(--line) 75%);
+  background-size: 200% 100%; animation: shimmer 1.4s linear infinite;
+}
+.skeleton i { display: block; height: 16px; margin: 16px 0; border-radius: 3px; }
+.skeleton i:nth-child(3n + 1) { width: 86%; }
+.skeleton i:nth-child(3n + 2) { width: 64%; }
+.skeleton i:nth-child(3n) { width: 75%; }
+#listing-pane.htmx-request > :not(.listing-head):not(.skeleton) { display: none; }
+/* Image preview: a placeholder box until the picture has arrived. */
+.preview { min-height: 140px; margin-bottom: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-panel); }
+.preview img { display: block; max-width: 100%; opacity: 0; transition: opacity 0.15s; }
+.preview.is-loaded { min-height: 0; }
+.preview.is-loaded img { opacity: 1; }
+.preview.is-failed::after { content: "Preview not available"; display: block; padding: var(--sp-5); color: var(--slate); font-size: var(--t-xs); }
+@media (prefers-reduced-motion: reduce) { .skeleton i, .preview { animation: none !important; } }
+/* Fields of the repository dialog that only apply to one repository type. */
+form[data-kind="rclone"] .only-local, form:not([data-kind="rclone"]) .only-rclone { display: none; }
 .fs-picker.htmx-request { opacity: 0.5; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: 0.35; } }

@@ -42,6 +42,9 @@ type listingPane struct {
 	Entries   []entry
 	Truncated int // entries that were left out
 	Err       string
+	// Loading marks the placeholder pane of a freshly opened explorer page: it
+	// holds no entries yet and fetches its listing as soon as it is on screen.
+	Loading bool
 }
 
 // treeNode is a folder in the left-hand tree. Folders are loaded on demand, one
@@ -140,10 +143,12 @@ func (s *Server) handleExplorer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The page opens at once with a placeholder; the folder listing, which can be
+	// slow on remote repositories, arrives as a fragment (see handleListing).
 	current := backend.CleanPath(r.URL.Query().Get("path"))
-	nodes, err := s.Explorer.List(r.Context(), req.Ref, req.Snap.ID, current)
-	data.Pane = newPane(req.Base, current, nodes, err)
-	data.Tree = buildTree(req.Base, current, nodes)
+	data.Pane = newPane(req.Base, current, nil, nil)
+	data.Pane.Loading = true
+	data.Tree = buildTree(req.Base, current, nil)
 	s.renderPage(w, r, "explorer", title, active, data)
 }
 
@@ -199,7 +204,16 @@ func (s *Server) handleListing(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := backend.CleanPath(r.URL.Query().Get("path"))
 	nodes, err := s.Explorer.List(r.Context(), req.Ref, req.Snap.ID, dir)
-	s.renderFragment(w, r, "listing_pane", newPane(req.Base, dir, nodes, err))
+	pane := newPane(req.Base, dir, nodes, err)
+	if r.URL.Query().Get("init") != "" {
+		// First listing of a freshly opened page: fill the folder tree as well.
+		s.renderFragment(w, r, "listing_init", struct {
+			Pane listingPane
+			Tree treeNode
+		}{pane, buildTree(req.Base, dir, nodes)})
+		return
+	}
+	s.renderFragment(w, r, "listing_pane", pane)
 }
 
 // handleTree expands one tree folder.

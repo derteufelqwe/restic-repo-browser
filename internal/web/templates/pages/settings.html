@@ -2,18 +2,18 @@
 <header class="page-head">
   <div>
     <h1>Settings</h1>
-    <p class="lede">Repositories on this server's disks and when they are synced.</p>
+    <p class="lede">Your repositories and when they are synced.</p>
   </div>
   <div class="actions"><button type="button" class="btn primary" hx-get="/settings/repos/new" hx-target="#dlg-content" hx-swap="innerHTML">Add repository</button></div>
 </header>
 
 <section class="panel" aria-label="Repositories" style="margin-bottom:var(--sp-6)">
   <div class="table-wrap"><table class="data">
-    <thead><tr><th scope="col">Name</th><th scope="col">Path</th><th scope="col">Last sync</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Location</th><th scope="col">Last sync</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
     <tbody>
       {{range .Repos}}<tr>
         <td><b>{{.Name}}</b></td>
-        <td class="mono" style="word-break:break-all">{{.Location}}</td>
+        <td class="mono" style="word-break:break-all">{{.Location}}{{if ne .Backend "local"}} <span class="tag">{{.Backend}}</span>{{end}}{{if .ReadOnly}} <span class="tag">read-only</span>{{end}}</td>
         <td>{{if .NeverSynced}}<span class="muted">Never</span>{{else}}<span title="{{date .RefreshedAt}}">{{rel .RefreshedAt}}</span><span class="sub{{if .Unreachable}} failed{{end}}">{{if .Unreachable}}Failed: {{.RefreshError}}{{else}}Succeeded{{end}}</span>{{end}}</td>
         <td>{{template "status" .}}</td>
         <td class="actions"><div class="btn-row">
@@ -40,5 +40,5 @@
   </div>
 </section>
 
-<dialog id="repo-dialog" aria-labelledby="dlg-title"><div id="dlg-content"></div></dialog>
+<dialog id="repo-dialog" aria-labelledby="dlg-title"><div id="dlg-content"{{with .OpenDialog}} hx-get="{{.}}" hx-trigger="load"{{end}}></div></dialog>
 {{end}}{{end}}

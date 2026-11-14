@@ -44,6 +44,12 @@ func toSnapshots(in []snapshotJSON) []domain.Snapshot {
 	return out
 }
 
+// statsJSON is the output of `restic stats --json`.
+type statsJSON struct {
+	TotalSize      int64 `json:"total_size"`
+	TotalFileCount int64 `json:"total_file_count"`
+}
+
 // nodeJSON is an entry of `restic ls --json`. Its fields match backend.Node, so
 // the two convert directly.
 type nodeJSON struct {

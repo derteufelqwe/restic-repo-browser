@@ -5,7 +5,10 @@ It is meant to run in your local network.
 
 ## Features
 
-- [x] View and explore the snapshots of your local restic repos
+- [x] View and explore the snapshots of your restic repos
+- [x] Local repo support
+- [x] Rclone repo support
+- [ ] Restic-rest repo support
 - [x] Simple single-user login
 - [x] Data is cached in case your resic repos are on cold storage (like a spun down HDD)
 - [x] Configure automatic pruning jobs (this is the only non-viewing part)
@@ -80,5 +83,5 @@ to your repositories, and write access if you use cleanup jobs (forget and prune
 
 ## Disclaimer
 
-AI was involved in developing this tool (which in 2026 is a codeword for "It was absolutely vibe coded").
-But it does work very well for me, so it might also work fine for you. If not you are welcome to open a PR.
+AI was involved in developing this tool (which, in 2026, is a codeword for "It was fully vibe coded").
+But it does work very well for me, so it might also work fine for you. If not you are welcome to open a PR or create an issue.

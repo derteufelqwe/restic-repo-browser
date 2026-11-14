@@ -16,6 +16,7 @@ const (
 	KindWrongPassword           // the password is wrong
 	KindBinaryMissing           // the tool behind the backend could not be started
 	KindUnsupported             // the backend does not offer the operation
+	KindReadOnly                // the repository is marked read-only
 )
 
 // Error is a failed backend call.
@@ -48,11 +49,26 @@ var (
 	ErrWrongPassword error = kindError(KindWrongPassword)
 	ErrBinaryMissing error = kindError(KindBinaryMissing)
 	ErrUnsupported   error = kindError(KindUnsupported)
+	ErrReadOnly      error = kindError(KindReadOnly)
 )
 
 // Unsupported is the error for an operation or repository kind a backend lacks.
 func Unsupported(format string, args ...any) error {
 	return &Error{Kind: KindUnsupported, Message: fmt.Sprintf(format, args...)}
+}
+
+// readOnlyError is returned instead of changing a read-only repository.
+func readOnlyError() error {
+	return &Error{Kind: KindReadOnly, Message: "this repository is read-only"}
+}
+
+// RequireWritable returns ErrReadOnly for a read-only ref. Backends call it
+// first in every method that changes the repository.
+func RequireWritable(ref Ref) error {
+	if ref.ReadOnly {
+		return readOnlyError()
+	}
+	return nil
 }
 
 // UserMessage returns a short sentence fit for display next to a repository.
@@ -70,6 +86,8 @@ func UserMessage(err error) string {
 		return "The repository is locked by another process."
 	case KindBinaryMissing:
 		return "The restic program could not be started."
+	case KindReadOnly:
+		return "This repository is read-only."
 	}
 	return be.Error()
 }

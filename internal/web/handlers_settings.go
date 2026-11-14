@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +42,7 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	for _, sum := range sums {
 		row := jobRow{Repo: sum.Repo, Last: sum.LastRun}
 		if sum.Job != nil {
-			jv := newJobView(*sum.Job, s.Now())
+			jv := newJobView(*sum.Job, sum.Repo.ReadOnly, s.Now())
 			row.Job = &jv
 		}
 		data.Rows = append(data.Rows, row)
@@ -63,6 +65,9 @@ type settingsPage struct {
 	Repos       []settingsRepo
 	RefreshTime string
 	LastUpdate  time.Time
+	// OpenDialog is the dialog fragment the page loads (and so opens) right away:
+	// links from other pages use /settings?add=1 and /settings?edit=<id>.
+	OpenDialog string
 }
 
 type settingsRepo struct {
@@ -88,12 +93,31 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	data.OpenDialog = dialogToOpen(r.URL.Query(), data.Repos)
 	s.renderPage(w, r, "settings", "Settings", "settings", data)
+}
+
+// dialogToOpen maps ?add=1 and ?edit=<id> to the repository form fragment to load
+// when the settings page opens. An unknown id opens nothing.
+func dialogToOpen(q url.Values, repos []settingsRepo) string {
+	if q.Get("add") != "" {
+		return "/settings/repos/new"
+	}
+	if id, err := strconv.ParseInt(q.Get("edit"), 10, 64); err == nil {
+		for _, r := range repos {
+			if r.ID == id {
+				return fmt.Sprintf("/settings/repos/%d/edit", id)
+			}
+		}
+	}
+	return ""
 }
 
 type repoForm struct {
 	ID         int64 // 0 for a new repository
 	Name       string
+	Kind       domain.BackendKind
+	ReadOnly   bool
 	Location   string
 	BackupCron string
 	Error      string
@@ -142,7 +166,7 @@ func (s *Server) handleBackupCron(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
-	f := repoForm{}
+	f := repoForm{Kind: domain.BackendLocal}
 	if idStr := r.PathValue("id"); idStr != "" {
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
@@ -157,7 +181,7 @@ func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		f = repoForm{ID: repo.ID, Name: repo.Name, Location: repo.Location, BackupCron: repo.BackupCron}
+		f = repoForm{ID: repo.ID, Name: repo.Name, Kind: repo.Backend, ReadOnly: repo.ReadOnly, Location: repo.Location, BackupCron: repo.BackupCron}
 	}
 	f.Cron = s.explainCron(f.BackupCron)
 	s.renderFragment(w, r, "repo_form", f)
@@ -166,8 +190,11 @@ func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	f := repoForm{
-		Name: strings.TrimSpace(r.PostFormValue("name")), Location: strings.TrimSpace(r.PostFormValue("path")),
+		Name: strings.TrimSpace(r.PostFormValue("name")), Kind: domain.BackendKind(r.PostFormValue("kind")), ReadOnly: r.PostFormValue("read_only") != "", Location: strings.TrimSpace(r.PostFormValue("path")),
 		BackupCron: strings.Join(strings.Fields(r.PostFormValue("backup_cron")), " "),
+	}
+	if f.Kind == "" {
+		f.Kind = domain.BackendLocal
 	}
 	password := r.PostFormValue("password")
 	force := r.PostFormValue("force") != ""
@@ -189,8 +216,20 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 		f.NameErr = "Give the repository a name."
 		fail(f)
 		return
+	case !f.Kind.Valid():
+		f.Error = "Choose where the repository is."
+		f.Kind = domain.BackendLocal
+		fail(f)
+		return
 	case f.Location == "":
 		f.Error = "Enter the folder that holds the repository."
+		if f.Kind == domain.BackendRclone {
+			f.Error = "Enter the rclone remote and folder, for example gdrive:Backups/my-repo."
+		}
+		fail(f)
+		return
+	case f.Kind == domain.BackendRclone && !validRcloneLocation(f.Location):
+		f.Error = "An rclone location has the form remote:folder, for example gdrive:Backups/my-repo."
 		fail(f)
 		return
 	case f.BackupCron != "" && !validSchedule(f.BackupCron):
@@ -215,7 +254,7 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 
 	var id int64
 	var err error
-	n := store.NewRepo{Name: f.Name, Location: f.Location, Password: password, BackupCron: f.BackupCron}
+	n := store.NewRepo{Name: f.Name, Kind: f.Kind, ReadOnly: f.ReadOnly, Location: f.Location, Password: password, BackupCron: f.BackupCron}
 	if f.ID == 0 {
 		id, err = s.Store.CreateRepo(ctx, n, s.Now())
 	} else {
@@ -240,6 +279,12 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("HX-Redirect", "/settings")
 }
 
+// validRcloneLocation checks the "remote:folder" shape; rclone itself judges the rest.
+func validRcloneLocation(loc string) bool {
+	i := strings.Index(loc, ":")
+	return i > 0
+}
+
 // probe opens the repository with the form's path and password (or the stored
 // password when editing without entering a new one).
 func (s *Server) probe(ctx context.Context, f repoForm, password string) error {
@@ -250,7 +295,7 @@ func (s *Server) probe(ctx context.Context, f repoForm, password string) error {
 		}
 		password = stored
 	}
-	return s.Explorer.Probe(ctx, backend.Ref{Kind: domain.BackendLocal, Location: f.Location, Password: password})
+	return s.Explorer.Probe(ctx, backend.Ref{Kind: f.Kind, Location: f.Location, Password: password})
 }
 
 func (s *Server) handleRepoTest(w http.ResponseWriter, r *http.Request) {

@@ -132,23 +132,26 @@ func (s *Server) repoFromPath(w http.ResponseWriter, r *http.Request) (domain.Su
 type jobView struct {
 	domain.Job
 	Describe string
-	Next     time.Time // zero when paused or the schedule is invalid
+	ReadOnly bool      // the repository is read-only: the job is kept but never runs
+	Next     time.Time // zero when paused, read-only or the schedule is invalid
 }
 
-func newJobView(j domain.Job, now time.Time) jobView {
-	v := jobView{Job: j, Describe: "Custom schedule"}
+func newJobView(j domain.Job, readOnly bool, now time.Time) jobView {
+	v := jobView{Job: j, Describe: "Custom schedule", ReadOnly: readOnly}
 	if sch, err := schedule.Parse(j.Cron); err == nil {
 		v.Describe = sch.Describe()
-		if j.Enabled {
+		if j.Enabled && !readOnly {
 			v.Next = sch.Next(now)
 		}
 	}
 	return v
 }
 
-// StatusText summarises the job state for display: "Active", "Paused" or "Failing".
+// StatusText summarises the job state for display: "Active", "Paused", "Read-only" or "Failing".
 func (v jobView) StatusText(last *domain.Run) string {
 	switch {
+	case v.ReadOnly:
+		return "Read-only"
 	case !v.Enabled:
 		return "Paused"
 	case last != nil && last.Status == domain.RunFailed:

@@ -1,16 +1,25 @@
+{{define "tree_nav"}}<nav class="tree" id="tree" aria-label="Folders"><ul role="tree">{{template "tree_node" .}}</ul></nav>{{end}}
+
+{{/* The first listing of an explorer page: the folder list plus the folder tree, swapped in out of band. */}}
+{{define "listing_init"}}{{template "listing_pane" .Pane}}<nav class="tree" id="tree" aria-label="Folders" hx-swap-oob="true"><ul role="tree">{{template "tree_node" .Tree}}</ul></nav>{{end}}
+
 {{define "tree_node"}}<li role="treeitem" aria-expanded="{{.Open}}" class="{{if .Current}}is-current{{end}}" data-path="{{.Path}}"><div class="row">
   {{if .Open}}<button type="button" class="twist" data-toggle aria-label="Collapse {{.Name}}"></button>{{else}}<button type="button" class="twist" hx-get="{{.Base}}/tree?path={{pq .Path}}" hx-indicator="this" hx-target="closest li" hx-swap="outerHTML" aria-label="Expand {{.Name}}"></button>{{end}}
-  <a class="node" href="?path={{.Path}}" hx-get="{{.Base}}/listing?path={{pq .Path}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-push-url="?path={{.Path}}" title="{{.Name}}">{{template "icon_folder"}}<span style="overflow:hidden;text-overflow:ellipsis">{{.Name}}</span></a></div>
+  <a class="node" href="?path={{.Path}}" hx-get="{{.Base}}/listing?path={{pq .Path}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-sync="#listing-pane:replace" hx-push-url="?path={{.Path}}" title="{{.Name}}">{{template "icon_folder"}}<span style="overflow:hidden;text-overflow:ellipsis">{{.Name}}</span></a></div>
   {{if and .Open .Children}}<ul role="group">{{range .Children}}{{template "tree_node" .}}{{end}}</ul>{{end}}</li>{{end}}
 
-{{define "listing_pane"}}{{$base := .Base}}<div id="listing-pane" data-path="{{.Path}}">
+{{define "skeleton"}}<div class="skeleton" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>{{end}}
+
+{{define "listing_pane"}}{{$base := .Base}}<div id="listing-pane" data-path="{{.Path}}"{{if .Loading}} class="is-loading" hx-get="{{.Base}}/listing?path={{pq .Path}}&amp;init=1" hx-trigger="load" hx-swap="outerHTML"{{end}}>
   <div class="listing-head">
     <div class="pathbar" id="pathbar" aria-label="Current folder">
-      {{range $i, $c := .Crumbs}}{{if $i}}<span class="sep">/</span>{{end}}<button type="button"{{if eq $c.Path $.Path}} aria-current="page"{{end}} hx-get="{{$base}}/listing?path={{pq $c.Path}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-push-url="?path={{$c.Path}}">{{$c.Name}}</button>{{end}}
+      {{range $i, $c := .Crumbs}}{{if $i}}<span class="sep">/</span>{{end}}<button type="button"{{if eq $c.Path $.Path}} aria-current="page"{{end}} hx-get="{{$base}}/listing?path={{pq $c.Path}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-sync="#listing-pane:replace" hx-push-url="?path={{$c.Path}}">{{$c.Name}}</button>{{end}}
     </div>
     <input type="search" id="lf" placeholder="Filter this folder" aria-label="Filter this folder" style="width:200px;min-height:32px;padding:4px 10px">
   </div>
-  {{if .Err}}
+  {{template "skeleton"}}
+  {{if .Loading}}
+  {{else if .Err}}
   <div class="notice error" style="margin:var(--sp-4)"><div><strong>This folder cannot be read</strong><span class="mono">{{.Err}}</span></div></div>
   {{else if not .Entries}}
   <div class="empty" style="padding:var(--sp-5)">{{template "empty_art"}}<div><h3>This folder is empty</h3><p>Nothing was backed up inside it.</p></div></div>
@@ -26,8 +35,8 @@
       <tbody>
       {{range .Entries}}<tr data-name="{{.Name}}" data-dir="{{.Dir}}" data-size="{{if .Size}}{{.Size}}{{else}}-1{{end}}" data-mtime="{{.MTime.Unix}}">
         <td class="check"><input class="box" type="checkbox" name="path" value="{{.Path}}" aria-label="Select {{.Name}}"></td>
-        <td>{{if .Dir}}<button type="button" class="entry" hx-get="{{$base}}/listing?path={{pq .Path}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-push-url="?path={{.Path}}">{{template "icon_folder"}}<span>{{.Name}}</span></button>
-          {{else}}<button type="button" class="entry" hx-get="{{$base}}/details?path={{pq .Path}}" hx-target="#drawer" hx-swap="innerHTML">{{template "icon_file"}}<span>{{.Name}}</span></button>{{end}}</td>
+        <td>{{if .Dir}}<button type="button" class="entry" hx-get="{{$base}}/listing?path={{pq .Path}}" hx-target="#listing-pane" hx-swap="outerHTML" hx-indicator="#listing-pane" hx-sync="#listing-pane:replace" hx-push-url="?path={{.Path}}">{{template "icon_folder"}}<span>{{.Name}}</span></button>
+          {{else}}<button type="button" class="entry" hx-get="{{$base}}/details?path={{pq .Path}}" hx-target="#drawer" hx-swap="innerHTML" hx-sync="#drawer:replace">{{template "icon_file"}}<span>{{.Name}}</span></button>{{end}}</td>
         <td class="num">{{with .Size}}{{bytes .}}{{else}}<span class="muted">&ndash;</span>{{end}}</td>
         <td>{{day .MTime}}</td><td class="mono nowrap">{{.Mode}}</td>
         <td class="actions"><a class="btn sm quiet" href="{{download $base .Path "zip"}}" aria-label="Download {{.Name}}">{{template "icon_download"}}Download</a></td>
@@ -47,7 +56,7 @@
 
 {{define "details"}}<header><div><h2>{{.Node.Name}}</h2><p class="muted small">{{if .Node.IsDir}}Folder{{else}}File{{end}} in snapshot {{.Snap.ShortID}}</p></div><button type="button" class="btn sm quiet" data-close-drawer aria-label="Close details">Close</button></header>
 <div class="body">
-  {{if .Preview}}<img src="{{.Base}}/preview?path={{.Node.Path}}" alt="Preview of {{.Node.Name}}" style="max-width:100%;display:block;margin-bottom:var(--sp-4);border:1px solid var(--line)">{{end}}
+  {{if .Preview}}<div class="preview"><img src="{{.Base}}/preview?path={{.Node.Path}}" alt="Preview of {{.Node.Name}}"></div>{{end}}
   <dl class="facts">
     <dt>Path</dt><dd class="mono">{{.Node.Path}}</dd>
     <dt>Size</dt><dd>{{with .Node.Size}}{{bytes .}}<span class="sub">{{num64 .}} bytes</span>{{else}}Worked out on download{{end}}</dd>
