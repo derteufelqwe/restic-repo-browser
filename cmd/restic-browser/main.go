@@ -53,6 +53,12 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	// Checked first so a wrong folder fails the start before anything is created.
+	browseDir, err := config.ResolveBrowseDir(cfg.BrowseDir)
+	if err != nil {
+		return err
+	}
+
 	level := slog.LevelInfo
 	if cfg.Debug {
 		level = slog.LevelDebug
@@ -76,26 +82,26 @@ func run(ctx context.Context, args []string) error {
 	if cfg.Command == config.CmdSetPassword {
 		return setPassword(ctx, authSvc)
 	}
-	return serve(ctx, cfg, log, st, authSvc)
+	return serve(ctx, cfg, browseDir, log, st, authSvc)
 }
 
-func serve(ctx context.Context, cfg config.Config, log *slog.Logger, st *store.Store, authSvc *auth.Service) error {
+func serve(ctx context.Context, cfg config.Config, browseDir string, log *slog.Logger, st *store.Store, authSvc *auth.Service) error {
 	bin, err := config.ResolveRestic(cfg.ResticBin)
 	if err != nil {
 		return err
 	}
-	rc := restic.New(bin, filepath.Join(cfg.DataDir, "restic-cache"))
+	rc := restic.New(bin, filepath.Join(cfg.DataDir, "restic-cache"), restic.WithLogging(log, cfg.LogLevel))
 	version, err := rc.Version(ctx)
 	if err != nil {
 		return fmt.Errorf("run %s: %w", bin, err)
 	}
-	log.Info("starting", "restic", version, "data", cfg.DataDir)
+	log.Info("starting", "restic", version, "data", cfg.DataDir, "log_level", cfg.LogLevel, "browse_dir", browseDir)
 
 	tm := tasks.NewManager()
 	refresher := cache.New(st, rc, tm, log)
 	runner := jobs.New(st, rc, refresher, tm, log)
 	handler, err := web.New(web.Deps{
-		Store: st, Explorer: rc, Cache: refresher, Jobs: runner, Tasks: tm, Auth: authSvc, Log: log, SecureCookies: cfg.Secure,
+		Store: st, Explorer: rc, Cache: refresher, Jobs: runner, Tasks: tm, Auth: authSvc, Log: log, SecureCookies: cfg.Secure, BrowseDir: browseDir,
 	})
 	if err != nil {
 		return err

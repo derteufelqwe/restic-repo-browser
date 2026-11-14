@@ -138,7 +138,7 @@ func TestMatchesRestic(t *testing.T) {
 	policies := []domain.KeepPolicy{
 		{Last: 3},
 		{Daily: 4},
-		{Hourly: 5, Daily: 2},
+		{Daily: 5, Weekly: 2},
 		{Weekly: 3, Monthly: 2},
 		{Monthly: 2, Yearly: 1},
 		{Last: 1, Daily: 2},

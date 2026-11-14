@@ -58,8 +58,14 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Errorf("password = %q", pw)
 	}
 	r, err := s.Repo(ctx, id)
-	if err != nil || r.Name != "pics" || r.Path != "/mnt/pics" {
+	if err != nil || r.Name != "pics" || r.Path != "/mnt/pics" || r.BackupCron != "" {
 		t.Fatalf("repo = %+v, %v", r, err)
+	}
+	if err := s.UpdateRepo(ctx, id, NewRepo{Name: "pics", Path: "/mnt/pics", BackupCron: "0 3 * * 0"}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := s.Repo(ctx, id); r.BackupCron != "0 3 * * 0" {
+		t.Errorf("backup schedule = %q", r.BackupCron)
 	}
 	if err := s.DeleteRepo(ctx, id); err != nil {
 		t.Fatal(err)

@@ -56,6 +56,8 @@ type Deps struct {
 	Now      func() time.Time // defaults to time.Now
 	// SecureCookies marks the session cookie Secure (set when served over HTTPS).
 	SecureCookies bool
+	// BrowseDir is the folder the folder picker opens first. Empty means the home folder.
+	BrowseDir string
 }
 
 // Server is the HTTP handler of the application.
@@ -127,6 +129,7 @@ func (s *Server) routes() {
 	app("GET /jobs", s.handleJobs)
 
 	app("GET /settings", s.handleSettings)
+	app("GET /settings/backup-cron", s.handleBackupCron)
 	app("GET /settings/repos/new", s.handleRepoForm)
 	app("GET /settings/repos/{id}/edit", s.handleRepoForm)
 	app("POST /settings/repos", s.handleRepoSave)

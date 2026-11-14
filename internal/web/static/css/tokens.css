@@ -51,13 +51,14 @@
   --sp-5: 24px;
   --sp-6: 32px;
   --sp-7: 48px;
+  --sp-8: 64px;
 
   /* shape: two radii on purpose */
   --r-control: 2px;
   --r-panel: 6px;
 
   --rail-w: 248px;
-  --content-max: 1240px;
+  --content-max: 1920px;
 
   --shadow-modal: 0 24px 60px -12px rgba(21, 52, 58, 0.45);
 }

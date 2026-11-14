@@ -10,14 +10,14 @@ import (
 	"restic-repo-browser/internal/domain"
 )
 
-const jobColumns = `repo_id, cron, keep_last, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly,
+const jobColumns = `repo_id, cron, keep_last, keep_daily, keep_weekly, keep_monthly, keep_yearly,
 	prune, enabled`
 
 func scanJob(row interface{ Scan(...any) error }) (domain.Job, error) {
 	var j domain.Job
 	var prune, enabled int
 	k := &j.Keep
-	err := row.Scan(&j.RepoID, &j.Cron, &k.Last, &k.Hourly, &k.Daily, &k.Weekly, &k.Monthly, &k.Yearly,
+	err := row.Scan(&j.RepoID, &j.Cron, &k.Last, &k.Daily, &k.Weekly, &k.Monthly, &k.Yearly,
 		&prune, &enabled)
 	j.Prune, j.Enabled = prune != 0, enabled != 0
 	return j, err
@@ -57,13 +57,13 @@ func (s *Store) Jobs(ctx context.Context) (map[int64]domain.Job, error) {
 func (s *Store) SaveJob(ctx context.Context, j domain.Job) error {
 	k := j.Keep
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO jobs (`+jobColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO jobs (`+jobColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (repo_id) DO UPDATE SET
-			cron = excluded.cron, keep_last = excluded.keep_last, keep_hourly = excluded.keep_hourly,
+			cron = excluded.cron, keep_last = excluded.keep_last,
 			keep_daily = excluded.keep_daily, keep_weekly = excluded.keep_weekly,
 			keep_monthly = excluded.keep_monthly, keep_yearly = excluded.keep_yearly,
 			prune = excluded.prune, enabled = excluded.enabled`,
-		j.RepoID, j.Cron, k.Last, k.Hourly, k.Daily, k.Weekly, k.Monthly, k.Yearly,
+		j.RepoID, j.Cron, k.Last, k.Daily, k.Weekly, k.Monthly, k.Yearly,
 		boolInt(j.Prune), boolInt(j.Enabled))
 	if err != nil {
 		return fmt.Errorf("store: save job of repo %d: %w", j.RepoID, err)

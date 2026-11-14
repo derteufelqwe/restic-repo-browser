@@ -68,7 +68,7 @@
 .status .dot { box-shadow: none; }
 
 .tag {
-  display: inline-block; padding: 1px 7px;
+  display: inline-block; padding: 1px 7px; white-space: nowrap;
   border: 1px solid var(--line-strong); border-radius: var(--r-control);
   font-size: var(--t-xs); line-height: 1.5; color: var(--slate);
   background: var(--chalk);
@@ -201,8 +201,8 @@ legend { font-weight: 700; font-size: var(--t-md); letter-spacing: -0.01em; padd
 
 /* segmented control (radio group) */
 .segmented { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r-control); overflow: hidden; background: var(--chalk); flex-wrap: wrap; }
-.segmented label { position: relative; }
-.segmented input { position: absolute; opacity: 0; inset: 0; }
+.segmented label { position: relative; cursor: pointer; }
+.segmented input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
 .segmented span { display: block; padding: 7px 14px; font-weight: 600; border-right: 1px solid var(--line); cursor: pointer; }
 .segmented label:last-child span { border-right: 0; }
 .segmented input:checked + span { background: var(--petrol); color: var(--limestone); }
@@ -226,6 +226,7 @@ legend { font-weight: 700; font-size: var(--t-md); letter-spacing: -0.01em; padd
 .toggle b { display: block; font-weight: 600; line-height: 1.3; }
 .toggle small { display: block; color: var(--slate); font-size: var(--t-xs); }
 .toggle.inline { margin: 0; align-items: center; }
+label.toggle { width: fit-content; max-width: 100%; }
 
 input[type="checkbox"].box {
   appearance: none; width: 18px; height: 18px; margin: 0;
@@ -242,7 +243,7 @@ input[type="checkbox"].box:indeterminate::after { content: ""; width: 9px; heigh
 
 /* ---------- tabs ---------- */
 
-.tabs { display: flex; gap: var(--sp-5); border-bottom: 1px solid var(--line-strong); margin-bottom: var(--sp-5); overflow-x: auto; }
+.tabs { display: flex; gap: var(--sp-5); border-bottom: 1px solid var(--line-strong); margin-bottom: var(--sp-5); }
 .tabs button {
   background: none; border: 0; padding: var(--sp-3) 0; margin-bottom: -1px;
   border-bottom: 3px solid transparent; font-weight: 600; color: var(--slate); white-space: nowrap;
@@ -389,7 +390,7 @@ input[type="checkbox"].box:indeterminate::after { content: ""; width: 9px; heigh
 dialog {
   border: 1px solid var(--line-strong); border-radius: var(--r-panel);
   background: var(--chalk); color: var(--petrol);
-  padding: 0; width: min(520px, calc(100vw - 32px));
+  padding: 0; width: min(720px, calc(100vw - 32px));
   box-shadow: var(--shadow-modal);
 }
 dialog::backdrop { background: rgba(21, 52, 58, 0.55); }
@@ -440,6 +441,7 @@ body.login { min-height: 100vh; }
 .page-head .actions { align-items: center; }
 .page-head.tight { padding-bottom: var(--sp-4); }
 .sort-label { color: var(--slate); font-weight: 600; margin-right: calc(var(--sp-1) * -1); }
+.page-head .actions select { min-height: 0; padding-block: 8px; line-height: 1.2; }
 
 .cards { display: flex; flex-direction: column; gap: var(--sp-2); }
 .repo-card {
@@ -500,7 +502,7 @@ body.login { min-height: 100vh; }
 .schedule-row { display: flex; align-items: flex-end; gap: var(--sp-3); flex-wrap: wrap; }
 .schedule-row .field { margin: 0; width: 112px; }
 .schedule-row .field:last-child { width: 140px; }
-.keep-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--sp-3); }
+.keep-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sp-3); }
 .hint-line { margin: 0 0 var(--sp-2); }
 #cron-echo { margin-top: var(--sp-2); }
 .cleanup .after .toggle { margin-bottom: var(--sp-3); }

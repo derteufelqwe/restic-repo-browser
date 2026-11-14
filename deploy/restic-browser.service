@@ -1,0 +1,26 @@
+[Unit]
+Description=Restic Repo Browser
+After=network.target
+
+[Service]
+Type=simple
+User=restic-browser
+Group=restic-browser
+# Keeps the database, the encryption key and restic's cache in /var/lib/restic-browser.
+StateDirectory=restic-browser
+StateDirectoryMode=0700
+# Adjust the listen address and --browse-dir (the folder the "Browse" button opens first).
+ExecStart=/usr/local/bin/restic-browser --listen :8080 --data-dir /var/lib/restic-browser --browse-dir /srv/restic
+Restart=on-failure
+RestartSec=5
+
+# Hardening. The service only needs to read and write the repositories it manages.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -71,7 +71,6 @@ func (s *Server) funcs() template.FuncMap {
 		},
 		"runtime_of": func(r domain.Run) string { return format.Duration(r.Duration(now())) },
 		"download":   downloadURL,
-		"whole":      wholeSnapshotURL,
 		"pq":         pathQuery,
 		"add":        func(a, b int) int { return a + b },
 		"sub":        func(a, b int) int { return a - b },
@@ -88,6 +87,7 @@ func (s *Server) funcs() template.FuncMap {
 			}
 			return m
 		},
+		"trunc": truncate,
 		"join":  strings.Join,
 		"title": func(s string) string { return strings.ToUpper(s[:1]) + s[1:] },
 	}
@@ -170,4 +170,13 @@ func sendToast(w http.ResponseWriter, t toast) {
 func sendTaskStarted(w http.ResponseWriter, t toast) {
 	b, _ := json.Marshal(map[string]any{"toast": t, "task-changed": true})
 	w.Header().Set("HX-Trigger", string(b))
+}
+
+// truncate shortens s to at most n characters and marks the cut with an ellipsis.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }

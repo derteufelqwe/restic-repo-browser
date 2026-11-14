@@ -52,7 +52,6 @@
         <p class="muted small hint-line">A snapshot is kept if any rule matches it. Everything else is forgotten. Rules apply separately to each host and backup path.</p>
         <div class="keep-grid">
           <div class="field"><label for="k-last">Latest</label><input id="k-last" name="last" type="number" min="0" value="{{.Keep.Last}}"></div>
-          <div class="field"><label for="k-hourly">Hourly</label><input id="k-hourly" name="hourly" type="number" min="0" value="{{.Keep.Hourly}}"></div>
           <div class="field"><label for="k-daily">Daily</label><input id="k-daily" name="daily" type="number" min="0" value="{{.Keep.Daily}}"></div>
           <div class="field"><label for="k-weekly">Weekly</label><input id="k-weekly" name="weekly" type="number" min="0" value="{{.Keep.Weekly}}"></div>
           <div class="field"><label for="k-monthly">Monthly</label><input id="k-monthly" name="monthly" type="number" min="0" value="{{.Keep.Monthly}}"></div>

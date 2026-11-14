@@ -17,7 +17,7 @@
   <form id="snap-filter" class="toolbar" onsubmit="return false" hx-get="/repos/{{.S.Repo.ID}}/snapshots" hx-target="#snap-results" hx-swap="outerHTML" hx-trigger="input from:#f-q delay:300ms, change from:#f-host, change from:#f-tag, bucket-changed">
     <input class="grow" type="search" id="f-q" name="q" value="{{.Query.Filter.Query}}" placeholder="Search by ID, path, host or tag" aria-label="Search snapshots">
     <select id="f-host" name="host" aria-label="Host"><option value="">All hosts</option>{{$h := .Query.Filter.Host}}{{range .Hosts}}<option {{if eq . $h}}selected{{end}}>{{.}}</option>{{end}}</select>
-    <select id="f-tag" name="tag" aria-label="Tag"><option value="">All tags</option>{{$t := .Query.Filter.Tag}}{{range .Tags}}<option {{if eq . $t}}selected{{end}}>{{.}}</option>{{end}}</select>
+    <select id="f-tag" name="tag" aria-label="Tag"><option value="">All tags</option>{{$t := .Query.Filter.Tag}}{{range .Tags}}<option value="{{.}}" title="{{.}}" {{if eq . $t}}selected{{end}}>{{trunc . 25}}</option>{{end}}</select>
     <input type="hidden" name="from" value="{{if .Chip}}{{.From}}{{end}}">
     <input type="hidden" name="to" value="{{if .Chip}}{{.To}}{{end}}">
     <input type="hidden" name="label" value="{{if .Chip}}{{.Query.Label}}{{end}}">
@@ -25,6 +25,12 @@
   </form>
   {{template "snapshot_results" .}}
 </section>{{end}}
+
+{{/* A tag shows at most 25 characters; the title attribute always holds the full text. */}}
+{{define "tag"}}<span class="tag" title="{{.}}">{{trunc . 25}}</span>{{end}}
+
+{{/* The backed-up paths of a snapshot: the first one, the rest on demand. */}}
+{{define "paths"}}{{if gt (len .) 1}}<details class="paths"><summary><span class="sub mono">{{first .}}</span><span class="toggle more">and {{sub (len .) 1}} more</span></summary>{{range slice . 1}}<span class="sub mono">{{.}}</span>{{end}}<button type="button" class="toggle" data-collapse>show less</button></details>{{else}}<span class="sub mono">{{first .}}</span>{{end}}{{end}}
 
 {{define "snapshot_chip"}}{{if .Chip}}<span class="chip">{{.Query.Label}}<button type="button" data-clear-bucket aria-label="Clear date filter">&times;</button></span>{{end}}{{end}}
 
@@ -38,11 +44,11 @@
     {{range .Page.Items}}<tr>
       <td class="mono">{{.ShortID}}</td>
       <td>{{date .Time}}<span class="sub">{{rel .Time}}</span></td>
-      <td>{{.Host}}<span class="sub mono">{{first .Paths}}{{if gt (len .Paths) 1}} and {{sub (len .Paths) 1}} more{{end}}</span></td>
-      <td>{{range .Tags}}<span class="tag">{{.}}</span> {{else}}<span class="muted">None</span>{{end}}</td>
+      <td>{{.Host}}{{template "paths" .Paths}}</td>
+      <td>{{range .Tags}}{{template "tag" .}} {{else}}<span class="muted">None</span>{{end}}</td>
       <td class="num">{{with .Size}}{{bytes .}}{{else}}&ndash;{{end}}</td>
       <td class="num">{{with .Added}}{{bytes .}}{{else}}&ndash;{{end}}</td>
-      <td class="actions">{{if $browsing}}<div class="btn-row"><a class="btn sm" href="{{$base}}/{{.ID}}">Browse</a>{{$sb := printf "%s/%s" $base .ID}}{{template "download_menu" (dict "Zip" (whole $sb . "zip") "TarGz" (whole $sb . "tar.gz") "Class" "sm" "Label" "Download")}}</div>{{else}}<span class="muted small">Unavailable</span>{{end}}</td>
+      <td class="actions">{{if $browsing}}<div class="btn-row"><a class="btn sm" href="{{$base}}/{{.ID}}">Browse</a>{{$sb := printf "%s/%s" $base .ID}}{{template "download_menu" (dict "Zip" (download $sb "/" "zip") "TarGz" (download $sb "/" "tar.gz") "Class" "sm" "Label" "Download")}}</div>{{else}}<span class="muted small">Unavailable</span>{{end}}</td>
     </tr>{{end}}
     </tbody>
   </table></div>

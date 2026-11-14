@@ -23,6 +23,9 @@ type Repo struct {
 	RefreshError string
 	// SizeBytes is the repository's size on disk at the last successful refresh.
 	SizeBytes int64
+	// BackupCron is the cron expression of when backups are expected. Empty
+	// means the schedule is judged from the gaps between snapshots.
+	BackupCron string
 }
 
 // Unreachable reports whether the last sync failed.
@@ -77,7 +80,6 @@ type Lock struct {
 // KeepPolicy are the "keep" rules of a cleanup job (restic forget --keep-*).
 type KeepPolicy struct {
 	Last    int
-	Hourly  int
 	Daily   int
 	Weekly  int
 	Monthly int
@@ -86,7 +88,7 @@ type KeepPolicy struct {
 
 // Empty reports whether no keep rule is set. Such a policy would forget everything.
 func (k KeepPolicy) Empty() bool {
-	return k.Last == 0 && k.Hourly == 0 && k.Daily == 0 && k.Weekly == 0 &&
+	return k.Last == 0 && k.Daily == 0 && k.Weekly == 0 &&
 		k.Monthly == 0 && k.Yearly == 0
 }
 

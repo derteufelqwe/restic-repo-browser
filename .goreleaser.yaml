@@ -14,7 +14,7 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
-    files: [README.md]
+    files: [README.md, deploy/restic-browser.service]
 
 checksum:
   name_template: checksums.txt

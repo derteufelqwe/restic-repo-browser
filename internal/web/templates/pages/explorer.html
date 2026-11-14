@@ -7,8 +7,8 @@
   <div>
     <h1>Snapshot <span class="mono" style="font-weight:600">{{.Snap.ShortID}}</span></h1>
     <p class="lede">Taken {{date .Snap.Time}} ({{rel .Snap.Time}}) on {{.Snap.Host}}.{{with .Snap.Size}} {{bytes .}}{{end}}{{with .Snap.Files}} in {{num64 .}} files.{{end}}
-      {{range .Snap.Tags}}<span class="tag">{{.}}</span> {{end}}</p>
-    <p class="small muted" style="margin-top:var(--sp-1)">Backed up from {{range $i, $p := .Snap.Paths}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{end}}</p>
+      {{range .Snap.Tags}}{{template "tag" .}} {{end}}</p>
+    <p class="small muted" style="margin-top:var(--sp-1)">Backed up from {{range $i, $p := .Snap.Paths}}{{if $i}}, {{end}}<span class="mono">{{$p}}</span>{{end}}.</p>
   </div>
   <div class="actions">{{template "download_menu" (dict "Zip" .Zip "TarGz" .TarGz "Class" "primary" "Label" "Download snapshot")}}</div>
 </header>

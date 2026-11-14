@@ -35,17 +35,18 @@ type fsPage struct {
 }
 
 func (s *Server) handleFS(w http.ResponseWriter, r *http.Request) {
-	s.renderFragment(w, r, "fs_picker", browseFolder(r.URL.Query().Get("path")))
+	s.renderFragment(w, r, "fs_picker", browseFolder(r.URL.Query().Get("path"), s.BrowseDir))
 }
 
 // browseFolder resolves what the user typed to an existing folder (walking up
-// from a missing or file path) and lists its sub-folders.
-func browseFolder(requested string) fsPage {
+// from a missing or file path) and lists its sub-folders. fallback is where an
+// empty or unusable path starts; empty means the home folder.
+func browseFolder(requested, fallback string) fsPage {
 	requested = strings.TrimSpace(requested)
 	if requested == drivesPath && runtime.GOOS == "windows" {
 		return drivePage()
 	}
-	dir := startFolder(requested)
+	dir := startFolder(requested, fallback)
 	page := fsPage{Path: dir, IsRepo: looksLikeRepo(dir)}
 	if parent := filepath.Dir(dir); parent != dir {
 		page.Parent = parent
@@ -75,8 +76,9 @@ func browseFolder(requested string) fsPage {
 }
 
 // startFolder returns an existing folder for the typed text: the folder itself,
-// else the nearest existing parent, else the home folder.
-func startFolder(requested string) string {
+// else the nearest existing parent, else the configured default folder, else
+// the home folder.
+func startFolder(requested, fallback string) string {
 	if requested != "" {
 		p := filepath.Clean(requested)
 		for {
@@ -89,6 +91,9 @@ func startFolder(requested string) string {
 			}
 			p = parent
 		}
+	}
+	if st, err := os.Stat(fallback); fallback != "" && err == nil && st.IsDir() {
+		return fallback
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		return home

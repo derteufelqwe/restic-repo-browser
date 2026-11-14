@@ -10,7 +10,9 @@ import (
 
 	"restic-repo-browser/internal/cache"
 	"restic-repo-browser/internal/domain"
+	"restic-repo-browser/internal/format"
 	"restic-repo-browser/internal/restic"
+	"restic-repo-browser/internal/schedule"
 	"restic-repo-browser/internal/store"
 )
 
@@ -90,12 +92,45 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 type repoForm struct {
-	ID       int64 // 0 for a new repository
-	Name     string
-	Path     string
-	Error    string
-	NameErr  string
-	CanForce bool // the repository could not be opened; allow saving anyway
+	ID         int64 // 0 for a new repository
+	Name       string
+	Path       string
+	BackupCron string
+	Error      string
+	NameErr    string
+	CronErr    string
+	CanForce   bool // the repository could not be opened; allow saving anyway
+	Cron       cronEcho
+}
+
+// cronEcho is the plain-English explanation shown under a cron input. The
+// cron_echo template reads CronOK, CronEcho and NextRuns.
+type cronEcho struct {
+	Empty    bool // no schedule entered
+	CronOK   bool
+	CronEcho string
+	NextRuns []string
+}
+
+func (s *Server) explainCron(spec string) cronEcho {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return cronEcho{Empty: true}
+	}
+	sch, err := schedule.Parse(spec)
+	if err != nil {
+		return cronEcho{}
+	}
+	e := cronEcho{CronOK: true, CronEcho: sch.Describe()}
+	for _, t := range sch.NextRuns(s.Now(), 3) {
+		e.NextRuns = append(e.NextRuns, format.Run(t))
+	}
+	return e
+}
+
+// handleBackupCron explains the expected-backups cron expression while it is typed.
+func (s *Server) handleBackupCron(w http.ResponseWriter, r *http.Request) {
+	s.renderFragment(w, r, "backup_cron_echo", s.explainCron(r.URL.Query().Get("backup_cron")))
 }
 
 func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
@@ -114,14 +149,18 @@ func (s *Server) handleRepoForm(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		f = repoForm{ID: repo.ID, Name: repo.Name, Path: repo.Path}
+		f = repoForm{ID: repo.ID, Name: repo.Name, Path: repo.Path, BackupCron: repo.BackupCron}
 	}
+	f.Cron = s.explainCron(f.BackupCron)
 	s.renderFragment(w, r, "repo_form", f)
 }
 
 func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	f := repoForm{Name: strings.TrimSpace(r.PostFormValue("name")), Path: strings.TrimSpace(r.PostFormValue("path"))}
+	f := repoForm{
+		Name: strings.TrimSpace(r.PostFormValue("name")), Path: strings.TrimSpace(r.PostFormValue("path")),
+		BackupCron: strings.Join(strings.Fields(r.PostFormValue("backup_cron")), " "),
+	}
 	password := r.PostFormValue("password")
 	force := r.PostFormValue("force") != ""
 	if idStr := r.PathValue("id"); idStr != "" {
@@ -132,7 +171,10 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 		}
 		f.ID = id
 	}
-	fail := func(f repoForm) { s.renderFragmentStatus(w, r, "repo_form", f, http.StatusUnprocessableEntity) }
+	fail := func(f repoForm) {
+		f.Cron = s.explainCron(f.BackupCron)
+		s.renderFragmentStatus(w, r, "repo_form", f, http.StatusUnprocessableEntity)
+	}
 
 	switch {
 	case f.Name == "":
@@ -141,6 +183,10 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 		return
 	case f.Path == "":
 		f.Error = "Enter the folder that holds the repository."
+		fail(f)
+		return
+	case f.BackupCron != "" && !s.explainCron(f.BackupCron).CronOK:
+		f.CronErr = "This is not a valid schedule. Use five fields: minute, hour, day of month, month and weekday."
 		fail(f)
 		return
 	case f.ID == 0 && password == "":
@@ -161,7 +207,7 @@ func (s *Server) handleRepoSave(w http.ResponseWriter, r *http.Request) {
 
 	var id int64
 	var err error
-	n := store.NewRepo{Name: f.Name, Path: f.Path, Password: password}
+	n := store.NewRepo{Name: f.Name, Path: f.Path, Password: password, BackupCron: f.BackupCron}
 	if f.ID == 0 {
 		id, err = s.Store.CreateRepo(ctx, n, s.Now())
 	} else {

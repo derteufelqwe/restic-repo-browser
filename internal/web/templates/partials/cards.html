@@ -9,8 +9,8 @@
     <p class="url mono">{{$s.Repo.Path}}</p>
     {{if $s.Repo.Unreachable}}<p class="err">{{$s.Repo.RefreshError}}</p>{{end}}
   </div>
-  <div class="spark" title="Data added per snapshot, last 30 snapshots">
-    {{if .Spark}}<div class="spark-box"><canvas data-spark="{{.Spark}}"{{if $s.Repo.Unreachable}} data-muted{{end}}></canvas></div>{{else}}<p class="small muted spark-empty">No history yet</p>{{end}}
+  <div class="spark">
+    {{if .Spark}}<div class="spark-box"><canvas data-spark="{{.Spark}}" role="img" aria-label="Data added per snapshot, last 30 snapshots"{{if $s.Repo.Unreachable}} data-muted{{end}}></canvas></div>{{else}}<p class="small muted spark-empty">No history yet</p>{{end}}
   </div>
   <dl class="stats">
     <div><dt>Last backup</dt><dd>{{with $s.Last}}<b title="{{date .Time}}">{{rel .Time}}</b>{{else}}<b>Never</b>{{end}}</dd></div>

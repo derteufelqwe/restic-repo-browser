@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"restic-repo-browser/internal/domain"
-	"restic-repo-browser/internal/restic"
 	"restic-repo-browser/internal/store"
 	"restic-repo-browser/internal/tasks"
 )
@@ -116,7 +114,7 @@ func TestFolderPicker(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(repo, "config"), []byte("x"), 0o644))
 	must(t, os.WriteFile(filepath.Join(root, "a-file.txt"), []byte("x"), 0o644))
 
-	page := browseFolder(root)
+	page := browseFolder(root, "")
 	var names []string
 	var repoFlag bool
 	for _, en := range page.Entries {
@@ -134,18 +132,30 @@ func TestFolderPicker(t *testing.T) {
 	if page.Parent != filepath.Dir(root) {
 		t.Errorf("parent = %q", page.Parent)
 	}
-	if inside := browseFolder(repo); !inside.IsRepo {
+	if inside := browseFolder(repo, ""); !inside.IsRepo {
 		t.Error("the repository folder itself must be recognised")
 	}
 	// Typed text that does not exist yet starts at the nearest existing folder.
-	if got := browseFolder(filepath.Join(root, "alpha", "not", "there")).Path; got != filepath.Join(root, "alpha") {
+	if got := browseFolder(filepath.Join(root, "alpha", "not", "there"), "").Path; got != filepath.Join(root, "alpha") {
 		t.Errorf("start folder = %q", got)
 	}
-	if got := browseFolder(filepath.Join(root, "a-file.txt")).Path; got != root {
+	if got := browseFolder(filepath.Join(root, "a-file.txt"), "").Path; got != root {
 		t.Errorf("a file path must show its folder, got %q", got)
 	}
-	if got := browseFolder("").Path; got == "" {
+	if got := browseFolder("", "").Path; got == "" {
 		t.Error("an empty path must fall back to a real folder")
+	}
+
+	// The configured default folder is where an empty path starts, when it exists.
+	if got := browseFolder("", filepath.Join(root, "alpha")).Path; got != filepath.Join(root, "alpha") {
+		t.Errorf("default folder = %q", got)
+	}
+	if got := browseFolder("", filepath.Join(root, "missing")).Path; got == filepath.Join(root, "missing") || got == "" {
+		t.Errorf("a missing default folder must fall back, got %q", got)
+	}
+	// A path that exists wins over the default folder.
+	if got := browseFolder(root, filepath.Join(root, "alpha")).Path; got != root {
+		t.Errorf("typed path = %q", got)
 	}
 
 	// Over HTTP, from the repository dialog.
@@ -164,112 +174,58 @@ func TestFolderPicker(t *testing.T) {
 	}
 }
 
-// ---- explorer: paths relative to the backed-up folder ----
+// ---- explorer: shows exactly what restic ls returns ----
 
-func TestExplorerViewSingleRoot(t *testing.T) {
-	snap := domain.Snapshot{Paths: []string{`C:\Users\me\photos`}}
-	v := newView(snap, "")
-	if v.Root != "/C/Users/me/photos" || v.Virtual {
-		t.Fatalf("view = %+v", v)
+func TestCrumbs(t *testing.T) {
+	if got, want := crumbs("/"), []crumb{{"Snapshot root", "/"}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("crumbs(/) = %v", got)
 	}
-	if got := v.clamp("/C/Users/me"); got != v.Root {
-		t.Errorf("going above the root must be refused, got %q", got)
-	}
-	if got := v.clamp("/C/Users/me/photos/2026/x"); got != "/C/Users/me/photos/2026/x" {
-		t.Errorf("clamp inside = %q", got)
-	}
-	if got := v.rel("/C/Users/me/photos/2026/a.jpg"); got != "/2026/a.jpg" {
-		t.Errorf("rel = %q", got)
-	}
-	if got := v.rel(v.Root); got != "/" {
-		t.Errorf("rel(root) = %q", got)
-	}
-	want := []crumb{{"photos", "/C/Users/me/photos"}, {"2026", "/C/Users/me/photos/2026"}, {"Harz", "/C/Users/me/photos/2026/Harz"}}
-	if got := v.crumbs("/C/Users/me/photos/2026/Harz"); !reflect.DeepEqual(got, want) {
+	want := []crumb{{"Snapshot root", "/"}, {"a", "/a"}, {"b c", "/a/b c"}}
+	if got := crumbs("/a/b c"); !reflect.DeepEqual(got, want) {
 		t.Errorf("crumbs = %v", got)
-	}
-	// A root that is not one of the snapshot's folders is ignored.
-	if got := newView(snap, "/etc"); got.Root != v.Root {
-		t.Errorf("forged root accepted: %q", got.Root)
-	}
-	// Falling back to the whole tree is allowed.
-	if full := newView(snap, "/"); full.Root != "/" || full.Virtual || full.rootLabel() != "Snapshot root" {
-		t.Errorf("full tree view = %+v", full)
 	}
 }
 
-func TestExplorerViewSeveralRoots(t *testing.T) {
-	snap := domain.Snapshot{Paths: []string{"/srv/docker", "/etc/pihole"}}
-	v := newView(snap, "")
-	if !v.Virtual || v.Root != "/" {
-		t.Fatalf("view = %+v", v)
-	}
-	if got := v.clamp("/home"); got != "/" {
-		t.Errorf("outside every root: %q", got)
-	}
-	if got := v.clamp("/etc/pihole/conf"); got != "/etc/pihole/conf" {
-		t.Errorf("inside a root: %q", got)
-	}
-	if got := v.rel("/etc/pihole/conf/x"); got != "/conf/x" {
-		t.Errorf("rel = %q", got)
-	}
-	want := []crumb{{"All backed-up folders", "/"}, {"/etc/pihole", "/etc/pihole"}, {"conf", "/etc/pihole/conf"}}
-	if got := v.crumbs("/etc/pihole/conf"); !reflect.DeepEqual(got, want) {
-		t.Errorf("crumbs = %v", got)
-	}
-	tree := buildTree("/b", v, "/", nil)
-	if len(tree.Children) != 2 || tree.Children[0].Name != "/srv/docker" {
-		t.Errorf("tree = %+v", tree)
-	}
-}
-
-func TestExplorerIsRelativeToTheBackedUpFolder(t *testing.T) {
+func TestExplorerShowsTheWholeTree(t *testing.T) {
 	e := newEnv(t)
 	e.login()
 	snaps, _ := e.store.Snapshots(context.Background(), e.repoID)
 	snap := snaps[len(snaps)-1]
-	root := restic.NodePath(snap.Paths[0])
-	rootName := path.Base(root)
+	root := treePath(snap.Paths[0])
 	base := fmt.Sprintf("/repos/%d/snapshots/%s", e.repoID, snap.ShortID)
 
 	_, page := e.get(base)
-	wantContains(t, "explorer", page, ">"+rootName+"</button>", ">"+rootName+"</span>", "readme.txt", "&root=")
-	// Nothing above the backed-up folder appears in the path bar or tree.
-	parentName := path.Base(path.Dir(root))
-	for _, above := range []string{">" + parentName + "</button>", ">" + parentName + "</span>"} {
-		if strings.Contains(page, above) {
-			t.Errorf("explorer shows a folder above the backed-up one (%s)", above)
+	wantContains(t, "explorer", page, `data-path="/"`, "Snapshot root", `data-name="`+topFolder(root)+`"`, "format=zip&amp;path=%2F")
+	for _, banned := range []string{"root=", "data-root"} {
+		if strings.Contains(page, banned) {
+			t.Errorf("the page still carries a %q parameter", banned)
 		}
 	}
 
-	// A path above the root (or a forged root) is pulled back inside.
-	_, listing := e.hx("GET", base+"/listing?path="+url.QueryEscape(path.Dir(root))+"&root="+url.QueryEscape(root), nil)
-	wantContains(t, "clamped listing", listing, "readme.txt", `data-path="`+root+`"`)
-	_, forged := e.hx("GET", base+"/listing?path=%2F&root=%2Fetc", nil)
-	wantContains(t, "forged root", forged, "readme.txt")
-
-	// The details drawer shows the path inside the backup.
+	// Folders further down are reached with the paths restic reports.
+	_, listing := e.hx("GET", base+"/listing?path="+url.QueryEscape(root), nil)
+	wantContains(t, "backup folder", listing, "readme.txt", `data-path="`+root+`"`)
 	_, details := e.hx("GET", base+"/details?path="+url.QueryEscape(root+"/photos/2026/a.jpg"), nil)
-	wantContains(t, "details", details, `<dd class="mono">/photos/2026/a.jpg</dd>`)
+	wantContains(t, "details", details, `<dd class="mono">`+root+`/photos/2026/a.jpg</dd>`)
 
-	// "Download snapshot" packs the backed-up folder under its own name.
-	resp, body := e.get(wholeSnapshotURL(base, snap, "zip"))
+	// "Download snapshot" packs the whole tree, as restic dump of "/".
+	resp, body := e.get(downloadURL(base, "/", "zip"))
 	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Disposition"), "photos-"+snap.ShortID+".zip") {
 		t.Fatalf("whole download = %d %q", resp.StatusCode, resp.Header.Get("Content-Disposition"))
 	}
 	zr, err := zip.NewReader(bytes.NewReader([]byte(body)), int64(len(body)))
 	must(t, err)
-	var top = map[string]bool{}
+	top := map[string]bool{}
 	for _, f := range zr.File {
 		top[strings.SplitN(f.Name, "/", 2)[0]] = true
 	}
-	if len(top) != 1 || !top[rootName] {
-		t.Errorf("top-level entries of the archive = %v, want only %q", top, rootName)
+	if len(top) != 1 || !top[topFolder(root)] {
+		t.Errorf("top-level entries of the archive = %v, want only %q", top, topFolder(root))
 	}
 
-	// The snapshot list offers the same whole-snapshot link.
+	// The snapshot list offers the same link.
 	_, list := e.hx("GET", fmt.Sprintf("/repos/%d/snapshots", e.repoID), nil)
-	wantContains(t, "snapshot list", list, "whole=1")
+	wantContains(t, "snapshot list", list, "format=zip&amp;path=%2F")
 }
 
 func storeRepo(name, dir string) store.NewRepo {

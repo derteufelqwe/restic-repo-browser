@@ -13,8 +13,9 @@ import (
 // Chart data is computed here and handed to Chart.js as JSON in a data attribute.
 
 type sparkSeries struct {
-	Times []int64 `json:"t"` // unix milliseconds
-	Added []int64 `json:"a"` // bytes
+	Times []int64  `json:"t"` // unix milliseconds
+	Added []int64  `json:"a"` // bytes
+	IDs   []string `json:"s"` // short snapshot ids
 }
 
 // sparkJSON is the added-data series of the last 30 snapshots. The first
@@ -32,6 +33,7 @@ func sparkJSON(snaps []domain.Snapshot) string {
 	for _, sn := range rest {
 		s.Times = append(s.Times, sn.Time.UnixMilli())
 		s.Added = append(s.Added, sn.AddedBytes())
+		s.IDs = append(s.IDs, sn.ShortID)
 	}
 	b, _ := json.Marshal(s)
 	return string(b)

@@ -37,7 +37,7 @@ func TestStateFreshness(t *testing.T) {
 		{"single fresh snapshot", Repo{}, every(1, 0, 3*time.Hour), StateOK},
 	}
 	for _, c := range cases {
-		if got := Summarize(c.repo, c.snap, nil, nil, now).State; got != c.want {
+		if got := Summarize(c.repo, c.snap, nil, nil, nil, now).State; got != c.want {
 			t.Errorf("%s: state = %s, want %s", c.name, got, c.want)
 		}
 	}
@@ -47,7 +47,7 @@ func TestSummaryAggregates(t *testing.T) {
 	snaps := every(40, 24*time.Hour, time.Hour)
 	snaps[0].Tags, snaps[1].Tags = []string{"x"}, []string{"y", "x"}
 	snaps[2].Host = "other"
-	s := Summarize(Repo{}, snaps, nil, nil, now)
+	s := Summarize(Repo{}, snaps, nil, nil, nil, now)
 	if !reflect.DeepEqual(s.Hosts(), []string{"h", "other"}) {
 		t.Errorf("hosts = %v", s.Hosts())
 	}
@@ -155,5 +155,58 @@ func TestPageLinks(t *testing.T) {
 func TestKeepPolicyEmpty(t *testing.T) {
 	if !(KeepPolicy{}).Empty() || (KeepPolicy{Last: 1}).Empty() {
 		t.Error("Empty() wrong")
+	}
+}
+
+// cronAt is a fake schedule that runs at the anchor time and then every step.
+type cronAt struct {
+	anchor time.Time
+	step   time.Duration
+}
+
+func (c cronAt) Next(t time.Time) time.Time {
+	if t.Before(c.anchor) {
+		return c.anchor
+	}
+	n := t.Sub(c.anchor)/c.step + 1
+	return c.anchor.Add(n * c.step)
+}
+
+func TestStateWithSchedule(t *testing.T) {
+	// Weekly backups on the day of "now" (Wednesday 11 Nov 2026), 03:00.
+	weekly := cronAt{anchor: time.Date(2026, 11, 4, 3, 0, 0, 0, time.UTC), step: 7 * 24 * time.Hour}
+	hourly := cronAt{anchor: time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC), step: time.Hour}
+	snap := func(at time.Time) []Snapshot { return []Snapshot{{ID: "a", Time: at, Host: "h"}} }
+	day := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, time.UTC) }
+
+	cases := []struct {
+		name   string
+		sched  Schedule
+		snaps  []Snapshot
+		synced time.Time
+		at     time.Time
+		state  State
+		missed int
+	}{
+		{"weekly, backup 7 days ago, next one not due", weekly, snap(day(4, 3, 10)), day(11, 2, 0), day(11, 2, 0), StateOK, 0},
+		{"weekly, one run missed a day ago", weekly, snap(day(4, 3, 10)), day(12, 4, 0), day(12, 4, 0), StateLate, 1},
+		{"weekly, two runs missed", weekly, snap(day(4, 3, 10)), day(19, 4, 0), day(19, 4, 0), StateOverdue, 2},
+		{"weekly, run still within its grace time", weekly, snap(day(4, 3, 10)), day(11, 8, 0), day(11, 8, 0), StateOK, 0},
+		{"weekly, one run missed", weekly, snap(day(4, 3, 10)), day(11, 16, 0), day(11, 16, 0), StateLate, 1},
+		{"snapshot a little before the run counts for it", weekly, snap(day(11, 2, 30)), day(11, 16, 0), day(11, 16, 0), StateOK, 0},
+		{"judged up to the last sync, not up to now", hourly, snap(day(11, 13, 5)), day(11, 13, 30), day(11, 20, 0), StateOK, 0},
+		{"hourly, two hours without a backup", hourly, snap(day(11, 11, 5)), day(11, 13, 45), day(11, 13, 45), StateOverdue, 2},
+	}
+	for _, c := range cases {
+		repo := Repo{RefreshOKAt: c.synced}
+		got := Summarize(repo, c.snaps, nil, nil, c.sched, c.at)
+		if got.State != c.state || got.Missed != c.missed || !got.Scheduled {
+			t.Errorf("%s: state=%s missed=%d scheduled=%v, want %s / %d", c.name, got.State, got.Missed, got.Scheduled, c.state, c.missed)
+		}
+	}
+
+	// Without snapshots the schedule changes nothing.
+	if got := Summarize(Repo{}, nil, nil, nil, weekly, now); got.State != StateIdle || got.Scheduled {
+		t.Errorf("no snapshots: state=%s scheduled=%v", got.State, got.Scheduled)
 	}
 }

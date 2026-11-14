@@ -24,6 +24,10 @@
     const y = d.getFullYear() !== now.getFullYear() ? ', ' + d.getFullYear() : '';
     return `${MONTHS[d.getMonth()]} ${d.getDate()}${y}`;
   }
+  function fmtDateTime(ms) {
+    const d = new Date(ms), p = (n) => String(n).padStart(2, '0');
+    return `${fmtDate(ms)}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
   const readJSON = (el, attr) => { try { return JSON.parse(el.getAttribute(attr)); } catch (e) { return null; } };
 
   /* ---------- toasts ---------- */
@@ -61,8 +65,8 @@
     const colors = () => d.keys.map((k) => (k === selected ? COLORS.ochre : COLORS.bar));
     const hover = () => d.keys.map((k) => (k === selected ? COLORS.ochre : COLORS.barHover));
     const sizes = d.sizes.map((b) => b / GIB);
-    const span = Math.max(...sizes) - Math.min(...sizes);
-    const digits = span < 0.1 ? 3 : span < 1 ? 2 : span < 10 ? 1 : 0;
+    const top = Math.max(...sizes);
+    const digits = top < 0.1 ? 3 : top < 1 ? 2 : top < 10 ? 1 : 0;
     const inMB = Math.max(...d.added) < GIB;
     const unit = inMB ? 'MB' : 'GB', div = inMB ? MIB : GIB;
     const chart = new Chart(canvas, {
@@ -78,7 +82,7 @@
         scales: {
           x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 14 } },
           y: { beginAtZero: true, title: { display: true, text: `Data added (${unit})` }, ticks: { callback: (v) => num(v, 1).replace(/\.0$/, '') }, grid: { color: COLORS.grid } },
-          y1: { position: 'right', title: { display: true, text: 'Snapshot size (GB)' }, grid: { display: false }, ticks: { callback: (v) => num(v, digits) } },
+          y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'Snapshot size (GB)' }, grid: { display: false }, ticks: { callback: (v) => num(v, digits) } },
         },
         plugins: {
           legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, boxHeight: 8, padding: 16 } },
@@ -130,6 +134,30 @@
     if (c && c._setSelected) c._setSelected(null);
   }
 
+  // The sparkline canvas is only 34px high, so its tooltip is drawn as a separate
+  // element that can extend beyond the canvas.
+  let sparkTip = null;
+  function sparkTooltip(ctx, d) {
+    if (!sparkTip) {
+      sparkTip = document.createElement('div');
+      sparkTip.className = 'chart-tip';
+      sparkTip.hidden = true;
+      document.body.appendChild(sparkTip);
+    }
+    const tip = ctx.tooltip;
+    if (tip.opacity === 0 || !tip.dataPoints || !tip.dataPoints.length) { sparkTip.hidden = true; return; }
+    const i = tip.dataPoints[0].dataIndex;
+    sparkTip.textContent = '';
+    const title = document.createElement('b'); title.textContent = fmtDateTime(d.t[i]);
+    const added = document.createElement('span'); added.textContent = 'Data added: ' + fmtBytes(d.a[i]);
+    sparkTip.append(title, added);
+    if (d.s && d.s[i]) { const id = document.createElement('span'); id.textContent = 'Snapshot ' + d.s[i]; sparkTip.appendChild(id); }
+    const box = ctx.chart.canvas.getBoundingClientRect();
+    sparkTip.style.left = box.left + tip.caretX + 'px';
+    sparkTip.style.top = box.top + 'px';
+    sparkTip.hidden = false;
+  }
+
   function sparkline(canvas, d) {
     if (d.t.length < 2) return;
     new Chart(canvas, {
@@ -137,8 +165,9 @@
       data: { labels: d.t, datasets: [{ data: d.a, backgroundColor: canvas.hasAttribute('data-muted') ? '#a5bfbd' : COLORS.bar, hoverBackgroundColor: COLORS.barHover, borderRadius: 1, barPercentage: 0.85, categoryPercentage: 1 }] },
       options: {
         responsive: true, maintainAspectRatio: false, layout: { padding: 0 },
+        interaction: { mode: 'index', intersect: false },
         scales: { x: { display: false }, y: { display: false, beginAtZero: true } },
-        plugins: { legend: { display: false }, tooltip: { displayColors: false, callbacks: { title: (i) => fmtDate(d.t[i[0].dataIndex]), label: (c) => 'Added ' + fmtBytes(d.a[c.dataIndex]) } } },
+        plugins: { legend: { display: false }, tooltip: { enabled: false, external: (ctx) => sparkTooltip(ctx, d) } },
       },
     });
   }
@@ -231,6 +260,13 @@
   document.addEventListener('click', (e) => {
     const card = e.target.closest('.repo-card');
     if (card && !e.target.closest('a')) { const a = $('a', card); if (a) a.click(); }
+  });
+
+  /* ---------- snapshot list: collapse the expanded paths ---------- */
+
+  document.addEventListener('click', (e) => {
+    const less = e.target.closest('[data-collapse]');
+    if (less) less.closest('details').open = false;
   });
 
   /* ---------- snapshot filter chip ---------- */
@@ -336,7 +372,10 @@
       t.classList.add('is-open'); t.setAttribute('aria-hidden', 'false');
       const b = $('[data-close-drawer]', t); if (b) b.focus();
     }
-    if (t.id === 'listing-pane' || (t.isConnected === false && $('#listing-pane'))) {
+    // Only a new folder listing resets the explorer. Other swaps (such as the task
+    // banner replacing itself every few seconds) must leave the open drawer alone.
+    const path = (e.detail.pathInfo && e.detail.pathInfo.requestPath) || '';
+    if (t.id === 'listing-pane' || (t.isConnected === false && path.includes('/listing') && $('#listing-pane'))) {
       const pane = $('#listing-pane');
       if (pane) {
         $$('.tree li').forEach((li) => li.classList.toggle('is-current', li.dataset.path === pane.dataset.path));

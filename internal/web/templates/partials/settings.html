@@ -8,7 +8,13 @@
         <button type="button" class="btn" hx-get="/fs" hx-include="#r-path" hx-target="#fs-picker" hx-swap="outerHTML" hx-indicator="this">Browse…</button></div>
       <span class="hint">Folder on this server that holds the restic repository.</span>
       <div id="fs-picker"></div></div>
-    <div class="field" style="margin-bottom:0"><label for="r-pw">Repository password</label><input type="password" id="r-pw" name="password" autocomplete="off" {{if not .ID}}required{{end}}><span class="hint">{{if .ID}}Leave empty to keep the current password.{{else}}Stored encrypted on this server.{{end}}</span></div>
+    <div class="field"><label for="r-pw">Repository password</label><input type="password" id="r-pw" name="password" autocomplete="off" {{if not .ID}}required{{end}}><span class="hint">{{if .ID}}Leave empty to keep the current password.{{else}}Stored encrypted on this server.{{end}}</span></div>
+    <div class="field" style="margin-bottom:0"><label for="r-cron">Expected backups (cron, optional)</label>
+      <input id="r-cron" name="backup_cron" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="0 3 * * *" value="{{.BackupCron}}"
+        hx-get="/settings/backup-cron" hx-trigger="input changed delay:250ms" hx-target="#r-cron-echo" hx-swap="innerHTML">
+      <div class="cron-meaning" id="r-cron-echo" aria-live="polite">{{template "backup_cron_echo" .Cron}}</div>
+      {{with .CronErr}}<span class="hint" style="color:var(--carmine)">{{.}}</span>{{end}}
+      <span class="hint">When backups normally run, for example <span class="mono">0 3 * * *</span> for every day at 03:00. The repository shows as running late after one missed backup and as overdue after two. Leave empty to judge from the gaps between snapshots.</span></div>
   </div>
   <div class="dlg-foot">
     {{if .ID}}<button type="button" class="btn quiet" style="margin-right:auto;color:var(--carmine)" hx-post="/settings/repos/{{.ID}}/delete" hx-confirm="Remove {{.Name}} from this application? The repository itself is not touched.">Remove</button>{{end}}
@@ -17,6 +23,8 @@
     <button type="submit" class="btn primary">Save repository</button>
   </div>
 </form>{{end}}
+
+{{define "backup_cron_echo"}}{{if .Empty}}<span class="muted">Judged from the gaps between snapshots.</span>{{else}}{{template "cron_echo" .}}{{end}}{{end}}
 
 {{define "fs_picker"}}<div id="fs-picker" class="fs-picker">
   <div class="fs-head"><span class="mono fs-path">{{if .Drives}}Drives{{else}}{{.Path}}{{end}}</span>{{if .IsRepo}}<span class="tag">restic repository</span>{{end}}<button type="button" class="btn sm quiet" data-fs-close>Close</button></div>

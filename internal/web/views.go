@@ -93,7 +93,13 @@ func (s *Server) summarize(ctx context.Context, repo domain.Repo, jobs map[int64
 	if j, ok := jobs[repo.ID]; ok {
 		job = &j
 	}
-	sum := domain.Summarize(repo, snaps, locks, job, s.Now())
+	var sched domain.Schedule // stays a nil interface without a valid backup schedule
+	if repo.BackupCron != "" {
+		if p, err := schedule.Parse(repo.BackupCron); err == nil {
+			sched = p
+		}
+	}
+	sum := domain.Summarize(repo, snaps, locks, job, sched, s.Now())
 	if runs, err := s.Store.RepoRuns(ctx, repo.ID, 1); err != nil {
 		return domain.Summary{}, err
 	} else if len(runs) > 0 {
@@ -171,7 +177,6 @@ func keepText(k domain.KeepPolicy) string {
 		}
 	}
 	add(k.Last, "latest")
-	add(k.Hourly, "hourly")
 	add(k.Daily, "daily")
 	add(k.Weekly, "weekly")
 	add(k.Monthly, "monthly")

@@ -42,13 +42,17 @@ type Client struct {
 
 // New creates a Client for the restic executable at bin. cacheDir keeps restic's
 // own cache inside the application's data directory.
-func New(bin, cacheDir string) *Client {
-	return &Client{runner: execRunner{bin: bin}, cacheDir: cacheDir}
+func New(bin, cacheDir string, opts ...Option) *Client {
+	return NewWithRunner(execRunner{bin: bin}, cacheDir, opts...)
 }
 
 // NewWithRunner creates a Client with a custom Runner (for tests).
-func NewWithRunner(r Runner, cacheDir string) *Client {
-	return &Client{runner: r, cacheDir: cacheDir}
+func NewWithRunner(r Runner, cacheDir string, opts ...Option) *Client {
+	c := &Client{runner: r, cacheDir: cacheDir}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // environment is the child's environment: ours minus any RESTIC_* variables
@@ -295,7 +299,6 @@ func KeepArgs(k domain.KeepPolicy) []string {
 		}
 	}
 	add("--keep-last", k.Last)
-	add("--keep-hourly", k.Hourly)
 	add("--keep-daily", k.Daily)
 	add("--keep-weekly", k.Weekly)
 	add("--keep-monthly", k.Monthly)

@@ -1,6 +1,6 @@
 // Package retention evaluates restic's "keep" rules against a list of snapshots
 // without touching the repository. It mirrors the policy logic of `restic
-// forget` (grouping by host and paths, per-group counting of hourly, daily,
+// forget` (grouping by host and paths, per-group counting of daily,
 // weekly, monthly and yearly buckets) so the cleanup preview matches what a real run does.
 package retention
 
@@ -19,7 +19,6 @@ type Reason string
 // The rules, in the order they are reported.
 const (
 	ReasonLatest  Reason = "latest"
-	ReasonHourly  Reason = "hourly"
 	ReasonDaily   Reason = "daily"
 	ReasonWeekly  Reason = "weekly"
 	ReasonMonthly Reason = "monthly"
@@ -27,7 +26,7 @@ const (
 )
 
 // Reasons lists all rules in display order.
-var Reasons = []Reason{ReasonLatest, ReasonHourly, ReasonDaily, ReasonWeekly, ReasonMonthly, ReasonYearly}
+var Reasons = []Reason{ReasonLatest, ReasonDaily, ReasonWeekly, ReasonMonthly, ReasonYearly}
 
 // Decision is the verdict for one snapshot.
 type Decision struct {
@@ -109,7 +108,6 @@ type bucket struct {
 func applyGroup(list []domain.Snapshot, p domain.KeepPolicy) []Decision {
 	buckets := []*bucket{
 		{reason: ReasonLatest, limit: p.Last, key: func(_ time.Time, i int) string { return fmt.Sprint(i) }},
-		{reason: ReasonHourly, limit: p.Hourly, key: func(t time.Time, _ int) string { return t.Format("2006-01-02T15") }},
 		{reason: ReasonDaily, limit: p.Daily, key: func(t time.Time, _ int) string { return t.Format("2006-01-02") }},
 		{reason: ReasonWeekly, limit: p.Weekly, key: func(t time.Time, _ int) string {
 			y, w := t.ISOWeek()

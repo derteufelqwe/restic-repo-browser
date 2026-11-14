@@ -51,13 +51,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	whole := r.FormValue("whole") == "1"
 	nodes, err := s.resolveNodes(r.Context(), rr, snap.ID, paths)
-	if err != nil && whole {
-		// The recorded source folders are not in the tree (backup made with relative
-		// paths): the whole snapshot is then the whole tree.
-		nodes, err = s.resolveNodes(r.Context(), rr, snap.ID, []string{"/"})
-	}
 	if err != nil {
 		http.Error(w, restic.UserMessage(err), http.StatusBadGateway)
 		return
@@ -68,7 +62,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		s.sendFile(w, r, rr, snap.ID, nodes[0])
 		return
 	}
-	name := archiveName(sum.Repo.Name, snap.ShortID, nodes, archiveFormat, whole)
+	name := archiveName(sum.Repo.Name, snap.ShortID, nodes, archiveFormat)
 	setDownloadHeaders(w, name)
 	if archiveFormat == formatZip {
 		w.Header().Set("Content-Type", "application/zip")
@@ -85,6 +79,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		panic(http.ErrAbortHandler)
 	}
 }
+
+// errNotInSnapshot means a path is not part of a snapshot's file tree.
+var errNotInSnapshot = errors.New("not found in snapshot")
 
 // resolveNodes looks up every path, running one `restic ls` per distinct parent folder.
 func (s *Server) resolveNodes(ctx context.Context, rr restic.Repo, snapID string, paths []string) ([]restic.Node, error) {
@@ -113,7 +110,7 @@ func (s *Server) resolveNodes(ctx context.Context, rr restic.Repo, snapID string
 			}
 		}
 		if !found {
-			return nil, &restic.Error{Kind: restic.KindOther, Message: "not found in snapshot: " + p}
+			return nil, fmt.Errorf("%w: %s", errNotInSnapshot, p)
 		}
 	}
 	return out, nil
@@ -137,10 +134,10 @@ func setDownloadHeaders(w http.ResponseWriter, filename string) {
 	w.Header().Set("Cache-Control", "no-store")
 }
 
-func archiveName(repo, shortID string, nodes []restic.Node, archiveFormat string, whole bool) string {
+func archiveName(repo, shortID string, nodes []restic.Node, archiveFormat string) string {
 	ext := "." + archiveFormat
 	switch {
-	case whole || len(nodes) == 1 && nodes[0].Path == "/":
+	case len(nodes) == 1 && nodes[0].Path == "/":
 		return fmt.Sprintf("%s-%s%s", repo, shortID, ext)
 	case len(nodes) == 1:
 		return nodes[0].Name + ext

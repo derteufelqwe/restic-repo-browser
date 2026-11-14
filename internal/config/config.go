@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"restic-repo-browser/internal/restic"
 )
 
 // Command is what the binary was asked to do.
@@ -28,7 +30,9 @@ type Config struct {
 	DataDir   string // holds the SQLite database, the encryption key and restic's cache
 	ResticBin string // restic executable; resolved lazily, see ResolveRestic
 	Debug     bool
-	Secure    bool // the app is served over HTTPS (marks cookies Secure)
+	LogLevel  restic.LogMode // how much restic traffic is logged
+	Secure    bool           // the app is served over HTTPS (marks cookies Secure)
+	BrowseDir string         // folder the repository folder picker opens first; empty: home folder
 }
 
 const usage = `Usage: restic-browser [command] [flags]
@@ -60,6 +64,11 @@ func Parse(args []string, out io.Writer) (Config, error) {
 	fs.StringVar(&cfg.DataDir, "data-dir", "data", "directory for the database, key file and restic cache")
 	fs.StringVar(&cfg.ResticBin, "restic", "restic", "path of the restic executable")
 	fs.BoolVar(&cfg.Debug, "debug", false, "log every request")
+	fs.Func("log-level", "restic logging: default, commands (log every restic command) or responses (commands and what restic printed)", func(v string) (err error) {
+		cfg.LogLevel, err = restic.ParseLogMode(v)
+		return err
+	})
+	fs.StringVar(&cfg.BrowseDir, "browse-dir", "", "folder the repository folder picker opens first (must exist; default: the home folder)")
 	fs.BoolVar(&cfg.Secure, "secure-cookies", false, "mark the session cookie Secure (use behind HTTPS)")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
@@ -68,6 +77,27 @@ func Parse(args []string, out io.Writer) (Config, error) {
 		return cfg, fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 	return cfg, nil
+}
+
+// ResolveBrowseDir checks the --browse-dir flag. An empty value is fine and
+// stays empty; anything else must be an existing folder and is returned as an
+// absolute path.
+func ResolveBrowseDir(dir string) (string, error) {
+	if dir == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("--browse-dir %q: %w", dir, err)
+	}
+	st, err := os.Stat(abs)
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("--browse-dir %q does not exist: %w", dir, err)
+	case !st.IsDir():
+		return "", fmt.Errorf("--browse-dir %q is not a folder", dir)
+	}
+	return abs, nil
 }
 
 // ErrHelp is returned by Parse when -h was given.

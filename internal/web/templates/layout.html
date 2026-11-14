@@ -39,7 +39,7 @@
       {{range .Rail.Repos}}<a class="rail-link" href="/repos/{{.ID}}" {{if eq $.Active (printf "repo:%d" .ID)}}aria-current="page"{{end}}><span class="dot {{.Class}}" title="{{.Hint}}"></span>{{.Name}}</a>
       {{end}}
     </div>
-    <div class="rail-group">
+    <div class="rail-group bottom">
       <div class="rail-title">Maintenance</div>
       <a class="rail-link" href="/jobs" {{if eq .Active "jobs"}}aria-current="page"{{end}}>Jobs{{if .Rail.Failed}}<span class="rail-count alert" title="{{.Rail.Failed}} failed on the last run">{{.Rail.Failed}} failed</span>{{end}}</a>
       <a class="rail-link" href="/settings" {{if eq .Active "settings"}}aria-current="page"{{end}}>Settings</a>

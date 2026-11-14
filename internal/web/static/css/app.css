@@ -75,4 +75,24 @@ tr[hidden] { display: none; }
 .fs-item { display: flex; align-items: center; gap: var(--sp-2); width: 100%; text-align: left; background: none; border: 0; padding: 6px var(--sp-3); }
 .fs-item:hover { background: var(--shale); }
 .fs-item .ico { width: 16px; height: 16px; flex: none; color: var(--s2); }
+.fs-head .tag, .fs-item .tag { flex: none; }
+.fs-item > span:not(.tag) { min-width: 0; overflow-wrap: anywhere; }
 .fs-foot { padding: var(--sp-2) var(--sp-3); border-top: 1px solid var(--line); display: flex; justify-content: flex-end; }
+
+/* Snapshot list: several backed-up paths, expandable. */
+details.paths summary { list-style: none; cursor: pointer; }
+details.paths summary::-webkit-details-marker { display: none; }
+details.paths .toggle { color: var(--petrol); font-size: var(--t-xs); text-decoration: underline; text-underline-offset: 2px; }
+details.paths button.toggle { display: block; margin-top: 2px; padding: 0; background: none; border: 0; font-family: inherit; cursor: pointer; }
+details.paths[open] .more { display: none; }
+details.paths .sub { overflow-wrap: anywhere; }
+
+/* Tooltip of the repository card sparklines (drawn outside the small canvas so it is not clipped). */
+.chart-tip {
+  position: fixed; z-index: 60; pointer-events: none;
+  background: #15343a; color: #f4f6f2; border-radius: 4px; padding: 8px 10px;
+  font-size: 12px; line-height: 1.4; white-space: nowrap;
+  transform: translate(-50%, calc(-100% - 8px));
+}
+.chart-tip b { display: block; font-size: 13px; font-weight: 600; }
+.chart-tip span { display: block; color: rgba(244, 246, 242, 0.75); }

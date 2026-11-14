@@ -184,7 +184,7 @@ func jobFromForm(r *http.Request, repoID int64) (domain.Job, map[string]string) 
 	j := domain.Job{
 		RepoID: repoID, Cron: strings.Join(strings.Fields(r.PostFormValue("cron")), " "),
 		Keep: domain.KeepPolicy{
-			Last: num("last"), Hourly: num("hourly"), Daily: num("daily"), Weekly: num("weekly"),
+			Last: num("last"), Daily: num("daily"), Weekly: num("weekly"),
 			Monthly: num("monthly"), Yearly: num("yearly"),
 		},
 		Prune: r.PostFormValue("prune") != "", Enabled: r.PostFormValue("enabled") != "",
@@ -257,7 +257,7 @@ type previewData struct {
 }
 
 var reasonLabels = map[retention.Reason]string{
-	retention.ReasonLatest: "Latest snapshots", retention.ReasonHourly: "Hourly", retention.ReasonDaily: "Daily",
+	retention.ReasonLatest: "Latest snapshots", retention.ReasonDaily: "Daily",
 	retention.ReasonWeekly: "Weekly", retention.ReasonMonthly: "Monthly", retention.ReasonYearly: "Yearly",
 }
 

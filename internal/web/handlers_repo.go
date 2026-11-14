@@ -10,6 +10,7 @@ import (
 	"restic-repo-browser/internal/cache"
 	"restic-repo-browser/internal/domain"
 	"restic-repo-browser/internal/format"
+	"restic-repo-browser/internal/schedule"
 	"restic-repo-browser/internal/store"
 )
 
@@ -127,12 +128,35 @@ func (s *Server) notices(sum domain.Summary) []notice {
 		out = append(out, notice{Kind: "warn", Title: l.Host + " holds " + kind,
 			Body: fmt.Sprintf("The lock was created %s (as of the last data update). You can keep browsing. The cleanup job waits until the lock is gone.", format.Rel(l.Time, now))})
 	}
-	if sum.State == domain.StateOverdue && !sum.Repo.Unreachable() {
+	if !sum.Repo.Unreachable() && sum.Last() != nil {
 		last := sum.Last()
-		out = append(out, notice{Kind: "warn", Title: "No backup for " + strings.TrimSuffix(format.Rel(last.Time, now), " ago"),
-			Body: fmt.Sprintf("The last snapshot is from %s. This repository normally gets one every %s.", format.Date(last.Time, now, true), intervalText(sum.Interval))})
+		title := "No backup for " + strings.TrimSuffix(format.Rel(last.Time, now), " ago")
+		switch {
+		case sum.Scheduled && sum.Missed > 0:
+			kind := "warn"
+			if sum.State == domain.StateOverdue {
+				kind = "error"
+			}
+			expected := "on its schedule"
+			if sch, err := schedule.Parse(sum.Repo.BackupCron); err == nil {
+				expected = strings.ToLower(sch.Describe())
+			}
+			out = append(out, notice{Kind: kind, Title: title,
+				Body: fmt.Sprintf("The last snapshot is from %s. Backups are expected %s. %s missed since then.",
+					format.Date(last.Time, now, true), expected, missedText(sum.Missed))})
+		case !sum.Scheduled && sum.State == domain.StateOverdue:
+			out = append(out, notice{Kind: "warn", Title: title,
+				Body: fmt.Sprintf("The last snapshot is from %s. This repository normally gets one every %s.", format.Date(last.Time, now, true), intervalText(sum.Interval))})
+		}
 	}
 	return out
+}
+
+func missedText(n int) string {
+	if n == 1 {
+		return "1 scheduled backup was"
+	}
+	return fmt.Sprintf("%d scheduled backups were", n)
 }
 
 func intervalText(d time.Duration) string {

@@ -342,6 +342,19 @@ func waitUntil(t *testing.T, d time.Duration, cond func() bool) {
 	}
 }
 
+// treePath is where restic keeps a backed-up folder inside the snapshot's file
+// tree: the whole absolute path ("C:\Users\me" becomes "/C/Users/me").
+func treePath(native string) string {
+	p := strings.ReplaceAll(native, "\\", "/")
+	if len(p) >= 2 && p[1] == ':' {
+		p = "/" + p[:1] + p[2:]
+	}
+	return path.Clean("/" + p)
+}
+
+// topFolder is the first folder of a tree path, the only entry shown at the snapshot root.
+func topFolder(p string) string { return strings.Split(strings.Trim(p, "/"), "/")[0] }
+
 func TestExplorerAndDownloads(t *testing.T) {
 	e := newEnv(t)
 	e.login()
@@ -349,17 +362,17 @@ func TestExplorerAndDownloads(t *testing.T) {
 	must(t, err)
 	snap := snaps[len(snaps)-1]
 	base := fmt.Sprintf("/repos/%d/snapshots/%s", e.repoID, snap.ShortID)
-	root := restic.NodePath(snap.Paths[0])
+	root := treePath(snap.Paths[0])
 
 	resp, page := e.get(base)
 	if resp.StatusCode != 200 {
 		t.Fatalf("explorer = %d\n%s", resp.StatusCode, page)
 	}
-	wantContains(t, "explorer", page, "Snapshot "+snap.ShortID, "readme.txt", "counter.txt", "photos", ">"+path.Base(root)+"</span>", "Download snapshot", `id="listing-pane"`)
-	if !strings.Contains(page, `data-path="`+root+`"`) {
-		t.Errorf("tree lacks the backup root %q", root)
-	}
+	// The explorer starts at the root of the snapshot's tree, as restic ls reports it.
+	wantContains(t, "explorer", page, "Snapshot "+snap.ShortID, "Download snapshot", `id="listing-pane"`, `data-path="/"`, `data-name="`+topFolder(root)+`"`)
 
+	_, rootListing := e.hx("GET", base+"/listing?path="+url.QueryEscape(root), nil)
+	wantContains(t, "backup folder", rootListing, `data-name="readme.txt"`, `data-name="counter.txt"`, `data-name="photos"`)
 	_, listing := e.hx("GET", base+"/listing?path="+url.QueryEscape(root+"/photos"), nil)
 	wantContains(t, "listing", listing, "2026", "b.txt", `data-name="b.txt"`)
 	_, tree := e.hx("GET", base+"/tree?path="+url.QueryEscape(root+"/photos"), nil)
