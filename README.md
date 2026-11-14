@@ -3,6 +3,32 @@
 A small web interface for inspecting your [restic](https://restic.net) repositories.
 It is meant to run in your local network and not be exposed to the internet.
 
+## Images
+
+<table>
+  <tr>
+    <td>
+        <img src="docs/login.png" alt="Login" width="600">
+        <div style="text-align: center; color: #ababab;">The login page</div>
+    </td>
+    <td>
+        <img src="docs/repositories.png" alt="Repositories" width="600">
+        <div style="text-align: center; color: #ababab;">Repository Overview</div>
+    </td>
+  </tr>
+  <tr>
+    <td>
+        <img src="docs/repository-overview.png" alt="Repo Overview" width="600">
+        <div style="text-align: center; color: #ababab;">Single repo stats + snapshots list</div>
+    </td>
+    <td>
+        <img src="docs/repo-browser.png" alt="Snapshot Browser" width="600">
+        <div style="text-align: center; color: #ababab;">Snapshot file browser</div>
+    </td>
+  </tr>
+</table>
+
+
 ## Features
 
 - [x] View and explore the snapshots of your restic repos
